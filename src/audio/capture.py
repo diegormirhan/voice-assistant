@@ -189,6 +189,7 @@ class AudioCapture:
         # True while we are inside a speech segment (between start and end)
         return self._is_speech
 
+# Test the application
 if __name__ == "__main__":
     import signal
     q: "queue.Queue[np.ndarray]" = queue.Queue()
