@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+models/sherpa/*
+models/piper/*
+!**/.gitkeep
+
+build/
+dist/
+*.spec.bak
+
+.vscode/
+.idea/
