@@ -3,8 +3,9 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
-models/sherpa/*
-models/piper/*
+# Binários nativos e modelos (baixados do HuggingFace no first-run)
+bin/
+models/
 !**/.gitkeep
 
 build/

@@ -1,4 +1,4 @@
-# Assistente de Voz Full-Duplex em Tempo Real — No-Torch / AMD
+# Assistente de Voz Full-Duplex em Tempo Real — Stack GGML/Vulkan Unificada
 
 > Projeto de portfólio para vagas de Machine Learning Engineering
 > Duração estimada: 6 dias | Stack 100% local (Edge AI) | Windows 11 | GPU AMD
@@ -7,38 +7,45 @@
 
 ## Visão Geral
 
-Assistente de voz conversacional **full-duplex + visão** real: o usuário pode interromper a IA a qualquer momento (barge-in natural) e o sistema **vê o desktop** no instante da fala para responder com contexto visual. Ao iniciar o app, o LLM já é pré-carregado na VRAM da GPU AMD e permanece residente até o usuário fechar o programa — zero latência de cold-start entre turnos. Toda inferência roda **localmente** — sem APIs de nuvem — com latência-alvo de **< 2s** entre o fim da fala do usuário e o início da resposta audível.
+Assistente de voz conversacional **full-duplex + visão** real: o usuário pode interromper a IA a qualquer momento (barge-in natural) e o sistema **vê o desktop** no instante da fala para responder com contexto visual. Todo o pipeline roda **localmente** — sem nuvem, sem chaves — com latência-alvo de **< 2s** entre o fim da fala e o início da resposta audível.
+
+### Decisão arquitetural central: GGML/Vulkan unificado
+
+Todos os modelos de inferência pesada rodam na **mesma infraestrutura**: a biblioteca C++ **ggml** com backend **Vulkan** — cross-vendor (AMD, NVIDIA, Intel) e nativo no Windows sem WSL.
+
+- **STT + VAD**: `whisper.cpp` (whisper-server, Vulkan)
+- **LLM (texto + visão)**: `llama.cpp` (llama-server, Vulkan)
+- **TTS**: Kokoro (82M, CPU) — leve o suficiente pra rodar em CPU com qualidade alta
+
+Esses servidores C++ rodam como **processos separados** (subprocesses) orquestrados por um Python limpo via HTTP. Isso permite empacotar o app Windows com os binários nativos prontos — sem dependências Python frágeis, sem torch, sem CUDA.
 
 ### Diferenciais de portfólio
-- **Engenharia de sistemas assíncronos**: 6 threads + asyncio + queues, com barge-in consistente.
-- Pipeline Edge AI multimodal **sem PyTorch/CUDA**: VAD (C) → Screenshot + STT (ONNX) → LLM Visão (Vulkan) → TTS (ONNX).
-- **Modelo pré-carregado na VRAM**: zero cold-start entre turnos; gestão explícita de `keep_alive` via Ollama.
-- Decisão arquitetural explícita: cada modelo no backend ideal para GPU AMD 16GB no Windows.
-- Empacotamento como produto desktop (.exe + instalador).
+- **Engenharia de sistemas**: orchestrator asyncio + subprocesses de servidores C++ + barge-in consistente.
+- Pipeline Edge AI multimodal **sem PyTorch/CUDA**: VAD+STT (ggml) → Screenshot + LLM (ggml/Vulkan) → TTS (Kokoro).
+- **Uma infraestrutura GPU só** (Vulkan) para STT e LLM — decisão arquitetural limpa e portável.
+- Empacotamento como produto desktop (.exe + instalador) com binários nativos Vulkan.
 
 ---
 
 ## Restrição Crítica de Hardware
 
 - GPU **AMD** (sem CUDA), **sem WSL**, Windows 11 nativo.
-- **PROIBIDO**: `torch`, `tensorflow`, `jax` ou qualquer dependência que puxe CUDA.
-- Inferência neural exclusivamente via **ONNX Runtime** e **llama.cpp (Vulkan)** através do Ollama.
+- **PROIBIDO**: `torch`, `tensorflow`, `jax` ou qualquer dependência que puxe CUDA no pipeline.
+- Inferência via **GGML + Vulkan** (C++ nativo, cross-vendor).
 
 ### Onde cada modelo roda (decisão arquitetural)
 
 | Componente | Backend | Dispositivo | Justificativa |
 |---|---|---|---|
 | Screenshot | `mss` (C) | CPU | Captura de tela em ~5ms; sem GPU |
-| VAD | Silero VAD (ONNX via onnxruntime) | CPU | MIT, ~2MB, exportação ONNX oficial, probabilidade contínua 0–1, latência ~30ms |
-| STT | sherpa-onnx (ONNX Runtime) | CPU (int8) | whisper small int8: RTF < 0.5 em CPU moderna; build DirectML do sherpa é otimização opcional |
-| LLM (visão) | Ollama → llama.cpp | **GPU AMD via Vulkan** | qwen3.5:9b q4 (~5.5GB); pré-carregado na VRAM desde o boot |
-| TTS | Piper (ONNX Runtime) | CPU | RTF << 1; síntese por frase é quase instantânea |
+| VAD | Silero-VAD (ggml, embutido no whisper.cpp) | **GPU (Vulkan)** | Vem junto do whisper.cpp (`--vad`); ~864KB |
+| STT | whisper.cpp (ggml) | **GPU (Vulkan)** | streaming real, multilingue (pt-BR), sem janela fixa de 30s |
+| LLM (visão) | llama.cpp (ggml) | **GPU (Vulkan)** | qwen3.5:9b Q4 (~5.5GB); pré-carregado na VRAM |
+| TTS | Kokoro (82M) | CPU | 82M params; pt-BR; qualidade alta; CPU com folga |
 
-> A aceleração em GPU acontece onde o custo é real: **o LLM multimodal**. STT e TTS quantizados em CPU já cabem no orçamento de latência.
+> **A aceleração em GPU cobre STT e LLM** — os dois gargalos. O TTS (82M) roda em CPU sem comprometer o orçamento. Vulkan é o backend cross-vendor: os mesmos binários funcionam em AMD, NVIDIA e Intel.
 
-> **Modelo pré-carregado na inicialização**: `main.py` envia uma requisição `ollama.chat(keep_alive=-1)` antes de iniciar qualquer pipeline. O modelo `qwen3.5:9b` (~5.5GB dos 16GB disponíveis) fica residente na VRAM durante toda a sessão — sem GC entre turnos.
-
-> Verificar GPU: `ollama ps` com a coluna `PROCESSOR` deve indicar `100% GPU`.
+> **Modelo pré-carregado na VRAM**: o `llama-server` carrega o modelo na inicialização e permanece residente durante a sessão (`--n-gpu-layers` máximo). Sem cold-start entre turnos.
 
 ---
 
@@ -46,110 +53,86 @@ Assistente de voz conversacional **full-duplex + visão** real: o usuário pode 
 
 | Camada | Tecnologia | Justificativa |
 |---|---|---|
-| Screenshot | `mss` (C) + `Pillow` | Captura de tela no `speech_start`; mss é o mais rápido (~5ms) |
-| VAD | `Silero VAD` (ONNX) | MIT, exportação ONNX oficial (~2MB), usa `onnxruntime` já presente no stack, zero dependências novas |
-| STT | `sherpa-onnx` | Whisper/Zipformer via ONNX Runtime, wheels Windows, sem torch |
-| LLM | Ollama (`qwen3.5:9b`) | Vulkan/AMD nativo, visão + texto, pré-carregado na VRAM (`keep_alive=-1`) |
-| TTS | `piper-tts` | ONNX puro, vozes pt-BR locais, síntese rápida por frase |
-| Audio I/O | `sounddevice` | Capture + playback unificados via PortAudio; callback-based, mantido ativamente |
-| UI | `PySide6` | Qt profissional: QSS (CSS-like), animações, signals/slots thread-safe |
+| VAD + STT | `whisper.cpp` (whisper-server) | GGML + Vulkan; streaming; VAD Silero embutido; multilingue |
+| LLM | `llama.cpp` (llama-server) | GGML + Vulkan; texto + visão (qwen3.5:9b); pré-carregado |
+| TTS | Kokoro (`kokoro` 82M) | Apache-2.0; pt-BR; qualidade alta; CPU leve |
+| Screenshot | `mss` (C) + `Pillow` | Captura ~5ms; resize antes de enviar ao LLM |
+| Audio I/O | `sounddevice` | Capture + playback unificados via PortAudio; callback-based |
 | Orquestração | `asyncio` + `queue.Queue` + `threading.Event` | Concorrência previsível com barge-in |
+| UI | `PySide6` | Qt profissional: QSS, animações, signals/slots thread-safe |
+| Binários nativos | CMake + `-DGGML_VULKAN=1` | Compila whisper-server/llama-server Vulkan uma vez; distribui no app |
 | Empacotamento | PyInstaller + Inno Setup | .exe standalone + instalador Windows |
 
-**Python: 3.12** — wheels garantidos para `pyaudio`, `sherpa-onnx` e `piper-tts`; sem a restrição de versão imposta pelo torch-directml.
+**Python: 3.12** — wheels garantidos para `sounddevice`, `Pillow`, `PySide6`, `kokoro`; sem a restrição do torch-directml.
 
 ---
 
-## Arquitetura de Buffers e Threads
+## Arquitetura de Processos e Threads
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│                  MAIN THREAD (UI / PySide6)                        │
-│                  render + status via signals/slots                  │
-└───────────────────────────────▲────────────────────────────────────┘
-                                │ callbacks thread-safe
-                                │
-┌───────────────────────────────┴────────────────────────────────────┐
-│         ASYNCIO EVENT LOOP (thread dedicada) + PRELOAD             │
-│                                                                    │
-│  ┌──────────────┐    ┌─────────────────┐    ┌──────────────┐      │
-│  │ Orchestrator │──▶│ Ollama stream    │──▶│ sentence cut │──┐    │
-│  │ (state mgr)  │◀──│ Qwen VL (visão)  │    │ (. ! ? \n)   │  │   │
-│  └──────▲───────┘    │ keep_alive=-1    │    └──────────────┘  │   │
-│         │            └─────────────────┘                       │   │
-│         │  transcript + screenshot (base64)                     │   │
-└─────────┼──────────────────────────────────────────────────────┼───┘
-          │                                                      │ llm_stream_q
-          │                                                      │
-┌─────────┴────────┐                                  ┌──────────▼────────┐
-│    STT THREAD    │                                  │   TTS THREAD      │
-│   sherpa-onnx    │                                  │  Piper (ONNX)     │
-│ whisper int8 CPU │                                  │  pt-BR female     │
-└─────────▲────────┘                                  └──────┬────────────┘
-          │ vad_segments_q                                   │ tts_audio_q
-          │                                                  ▼
-┌─────────┴────────────────┐   interrupt_event    ┌──────────────────────┐
-│     CAPTURE THREAD       │─────────────────────▶│   PLAYBACK THREAD    │
-│ sounddevice 16kHz +      │                      │    sounddevice       │
-│ Silero VAD 32ms +        │                      │    OutputStream      │
-│ mss screenshot           │                      └──────────────────────┘
-│ (no speech_start)        │
-└─────────┬────────────────┘
-          │ on_speech_start + _latest_screenshot
-          │ (callback + thread-safe property)
-          ▼
-   ┌─────────────────────────┐
-   │  INTERRUPTION MANAGER   │
-   │  - detecta barge-in     │
-   │  - set interrupt_event  │
-   │  - drena filas (mutex)  │
-   │  - cancela LLM task     │
-   │  - lock de reentrada    │
-   └─────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                          PYTHON APP                                  │
+│                                                                      │
+│  ┌─────────────────────┐         ┌──────────────────────────────┐    │
+│  │   UI (PySide6)      │◀────────│      ORCHESTRATOR (asyncio)  │    │
+│  │   main thread       │ signals │  - state machine             │    │
+│  └─────────────────────┘         │  - coordena filas/eventos    │    │
+│                                  │  - barge-in                  │    │
+│  ┌─────────────────────┐         └──────────────┬───────────────┘    │
+│  │  audio/capture.py   │ mic → STT              │                    │
+│  │  (sounddevice)      │      │                 │                    │
+│  └─────────────────────┘      ▼                 ▼                    │
+└──────────────────────────────────────────────────────────────────────┘
+                │                                   │
+                │  HTTP streaming                   │  HTTP streaming (visão + texto)
+                ▼                                   ▼
+┌───────────────────────────┐        ┌──────────────────────────────┐
+│   whisper-server.exe      │        │      llama-server.exe        │
+│   (C++ ggml, Vulkan)      │        │      (C++ ggml, Vulkan)      │
+│   - VAD embutido          │        │      - qwen3.5:9b Q4         │
+│   - STT streaming         │        │      - visão + texto         │
+└───────────────────────────┘        └──────────────┬───────────────┘
+                                                    │ frases (streaming)
+                                                    ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│   speech/tts.py (Kokoro, CPU) → áudio → audio/playback.py (sounddevice)│
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-### Threads (6 no total)
+### Processos (3)
+
+| Processo | Binário | Backend | Porta (default) | Papel |
+|---|---|---|---|---|
+| whisper-server | `whisper-server.exe` | Vulkan | 9991 | VAD + STT streaming |
+| llama-server | `llama-server.exe` | Vulkan | 9992 | LLM texto + visão |
+| Python app | `main.py` | — | — | UI + orchestrator + TTS |
+
+### Threads do app Python (5)
 
 | Thread | Loop | Bloqueio | Responsabilidade |
 |---|---|---|---|
-| Main | Qt event loop | signals/slots | render, botões, status, animações |
-| Capture | `sd.InputStream(callback)` | callback | VAD contínuo (Silero ONNX), segmenta fala, **screenshot no speech_start via mss**, dispara `on_speech_start` |
-| STT | `vad_segments_q.get()` | fila | transcreve segmento → `transcript_q` |
-| Asyncio | event loop | futures | orchestrator, Ollama streaming (visão + texto), sentence cutting |
-| TTS | `llm_stream_q.get()` | fila | sintetiza frase → `tts_audio_q` |
-| Playback | `tts_audio_q.get(timeout)` | fila + stream | escreve PCM, monitora `interrupt_event` |
+| Main | Qt event loop | signals | render UI |
+| Capture | `sd.InputStream(callback)` | callback | mic → manda p/ whisper-server |
+| STT consumer | `httpx` streaming | I/O | recebe transcrições do whisper-server |
+| LLM consumer | `httpx` streaming | I/O | recebe frases do llama-server → Kokoro |
+| Playback | `tts_q.get(timeout)` | fila + stream | escreve áudio, monitora interrupt |
 
-### Filas (todas `queue.Queue` thread-safe) + Screenshot
+### Filas (todas `queue.Queue` thread-safe)
 
-| Canal | Produtor | Consumidor | Payload | Propósito |
+| Fila | Produtor | Consumidor | Payload | Propósito |
 |---|---|---|---|---|
-| `_latest_screenshot` | Capture (no speech_start) | Orchestrator | `bytes` (PNG) | Screenshot do desktop no instante da fala; armazenado como atributo thread-safe no capture |
-| `vad_segments_q` | Capture | STT | `np.ndarray` int16 16kHz | fala segmentada no endpoint |
-| `transcript_q` | STT | Orchestrator | `str` | texto final do usuário |
-| `llm_stream_q` | LLM (asyncio) | TTS | `str` (frase completa) | sentenças prontas p/ síntese |
-| `tts_audio_q` | TTS | Playback | `np.ndarray` int16 22.05kHz | chunks de áudio sintetizado |
-| `interrupt_event` | Interruption | Playback + Orchestrator | `threading.Event` | sinal de barge-in |
-
-### Sample rates
-
-| Sinal | Taxa | Formato |
-|---|---|---|
-| Capture (mic) | 16 kHz | int16 mono (exigência do webrtcvad) |
-| STT input | 16 kHz | float32 normalizado [-1, 1] |
-| Piper output | 22.05 kHz (pt_BR-faber-medium) | int16 mono |
-| Playback | casar com a voz Piper escolhida | int16 mono |
+| `stt_lines_q` | STT consumer | Orchestrator | `str` | linha transcrita completa |
+| `llm_sentence_q` | Orchestrator (LLM) | TTS | `str` | frase pronta p/ síntese |
+| `tts_audio_q` | TTS | Playback | `np.ndarray` int16 | chunks de áudio |
+| `interrupt_event` | Capture/VAD | Playback + Orchestrator | `threading.Event` | sinal de barge-in |
 
 ### Lógica de Barge-in
 
-1. Capture roda webrtcvad **continuamente**, inclusive durante o playback (full-duplex real).
-2. Ao detectar `speech_start`, dispara o callback `on_speech_start` — sempre, não só durante playback.
-3. O Interruption Manager verifica `playback.is_active`:
-   - **Playback inativo** → ignora, é só o usuário começando a falar.
-   - **Playback ativo** → é barge-in: executa o protocolo de interrupção.
-4. Protocolo: `interrupt_event.set()` → drena `vad_segments_q` (parcial), `llm_stream_q`, `tts_audio_q` (com mutex por fila) → playback para no próximo chunk (< 20ms) → `asyncio.Task.cancel()` no LLM → TTS aborta a frase corrente.
-5. **O segmento que causou o barge-in NÃO é descartado** — ele é a nova fala do usuário e segue para o STT. Uma nova screenshot é capturada no speech_start do barge-in e substitui a anterior.
-6. Lock de reentrada impede barge-in duplo enquanto o protocolo executa.
-7. Estado global → `LISTENING`, propagado à UI via signals/slots (Qt thread-safe).
+1. Capture manda áudio ao whisper-server continuamente (full-duplex real).
+2. O VAD embutido (Silero) detecta `speech_start` **durante playback** → barge-in.
+3. Protocolo: `interrupt_event.set()` → drena `tts_audio_q` → playback para no próximo chunk (< 20ms) → `asyncio.Task.cancel()` no LLM → TTS aborta frase corrente.
+4. A fala que causou o barge-in **não é descartada** — vira a nova pergunta.
+5. Estado global → `LISTENING`, propagado à UI via signals/slots.
 
 **Latência-alvo de interrupção: < 100ms.**
 
@@ -157,30 +140,42 @@ Assistente de voz conversacional **full-duplex + visão** real: o usuário pode 
 
 | Estágio | Alvo |
 |---|---|
-| screenshot (`mss`) | < 10ms (captura síncrona no speech_start) |
-| VAD endpoint (após 450ms de silêncio) | < 100ms |
-| STT whisper small int8 (segmento 3-5s, CPU) | 400–800ms |
-| LLM primeiro token (qwen3.5:9b q4, Vulkan, pré-carregado) | 400–900ms |
-| TTS primeira frase (Piper medium, CPU) | 200–400ms |
-| **E2E (fim da fala → primeira sílaba)** | **< 2.5s** |
+| VAD endpoint | < 100ms |
+| STT (whisper.cpp, Vulkan, segmento 3-6s) | 200–600ms |
+| LLM primeiro token (llama.cpp Vulkan, pré-carregado) | 200–500ms |
+| TTS primeira frase (Kokoro, CPU) | 150–300ms |
+| **E2E (fim da fala → primeira sílaba)** | **< 2s** |
 
-> Com modelo pré-carregado na VRAM, o primeiro token do LLM compete com um modelo de 3B texto — a diferença de tamanho (~9B vs ~3B) é compensada pela ausência de cold-start.
+---
 
-### Estratégia de Pré-carga do LLM (VRAM persistente)
+## Estratégia de Distribuição (GitHub + HuggingFace)
 
-O `qwen3.5:9b` (~5.5GB em q4) precisa estar **carregado na VRAM da GPU antes de qualquer interação** e permanecer lá até que o usuário feche o app. Sem isso, cada turno sofre +2-3s de cold-start.
+O repositório GitHub guarda **apenas o código** (Python + scripts + configs). Tudo que é pesado fica fora:
 
-**Implementação:**
+| Artefato | Onde fica | Por quê |
+|---|---|---|
+| Código Python | GitHub (repo) | leve (~1MB) |
+| Binários Vulkan (`whisper-server.exe`, `llama-server.exe`, `ggml-vulkan.dll`) | **HuggingFace** (repo privado/público) | 200-400MB; compilados com Vulkan por você |
+| Modelos GGUF/ggml | **HuggingFace** (repos oficiais unsloth/jc-builds) | ~6.7GB; não versionar |
+| Voz Kokoro | HuggingFace | ~200MB |
 
-1. `main.py` → `preload_ollama()` antes de iniciar a UI e o pipeline.
-2. Envia `ollama.chat(model='qwen3.5:9b', messages=[{'role': 'user', 'content': 'ping'}], keep_alive=-1)` e aguarda o primeiro token (descarta).
-3. `keep_alive=-1` instrui o servidor Ollama a nunca descarregar o modelo da VRAM.
-4. Verifica com `ollama.ps()` se o modelo está com `PROCESSOR=100% GPU`.
-5. Só depois a UI abre e o pipeline inicia.
+- `.gitignore` bloqueia `bin/` e `models/`.
+- **First-run**: o app baixa binários + modelos automaticamente com barra de progresso.
+- Licenças: binários whisper.cpp/llama.cpp são MIT (redistribuíveis); modelos Qwen3.5 e Kokoro permitem redistribuição com atribuição.
 
-**Shutdown:** o graceful shutdown (Ctrl+C / botão fechar) chama `ollama_client.unload_model()` — o OS também libera a VRAM ao encerrar o processo.
+### Seleção de modelo conforme VRAM
 
-**Fallback:** se o Ollama não estiver rodando, `main.py` tenta iniciar via `subprocess`. Se falhar, exibe erro na UI.
+No first-run, o app **detecta a VRAM da GPU** (via Vulkan) e oferece escolha ao usuário:
+
+| Perfil | VRAM mínima | LLM | STT (whisper) | TTS |
+|---|---|---|---|---|
+| **Leve** | 4GB | Qwen3.5-4B Q4 (~2.5GB) | `base` ggml (~142MB) | Kokoro |
+| **Recomendado** | 8GB | Qwen3.5-9B Q4 (~5.5GB) | `small` ggml (~466MB) | Kokoro |
+
+- Detecção automática: ler VRAM via Vulkan API e sugerir perfil padrão.
+- Usuário pode trocar manualmente (botão "modelo leve / padrão").
+- `models.py` baixa **apenas** o perfil escolhido (evita download desnecessário).
+- Se a VRAM for insuficiente no perfil escolhido, avisa e oferece o menor.
 
 ---
 
@@ -190,50 +185,56 @@ O `qwen3.5:9b` (~5.5GB em q4) precisa estar **carregado na VRAM da GPU antes de 
 voice-assistant/
 ├── src/
 │   ├── __init__.py
-│   ├── main.py                  # entry point: preload LLM → bootstrap + UI + asyncio thread
+│   ├── main.py                  # entry: sobe servidores → orchestrator + UI
 │   ├── config.py                # hiperparâmetros centralizados
-│   │
-│   ├── audio/
-│   │   ├── __init__.py
-│   │   ├── capture.py           # PyAudio + webrtcvad (thread dedicada)
-│   │   └── playback.py          # sounddevice stream (thread dedicada)
-│   │
-│   ├── stt/
-│   │   ├── __init__.py
-│   │   └── recognizer.py        # sherpa-onnx wrapper (whisper small int8)
-│   │
-│   ├── llm/
-│   │   ├── __init__.py
-│   │   └── ollama_client.py     # AsyncClient visão + texto, keep_alive, preload
-│   │
-│   ├── tts/
-│   │   ├── __init__.py
-│   │   └── piper_engine.py      # Piper síntese por frase (ONNX)
 │   │
 │   ├── core/
 │   │   ├── __init__.py
-│   │   ├── pipeline.py          # orchestrator asyncio principal
-│   │   ├── interruption.py      # state machine de barge-in
-│   │   └── state.py             # AssistantState (LISTENING/THINKING/SPEAKING)
+│   │   ├── events.py            # filas + callbacks tipados
+│   │   ├── state.py             # AssistantState (LISTENING/THINKING/SPEAKING)
+│   │   └── orchestrator.py      # coordena tudo via asyncio
+│   │
+│   ├── servers/
+│   │   ├── __init__.py
+│   │   ├── whisper.py           # gerencia whisper-server (subprocess + HTTP)
+│   │   ├── llama.py             # gerencia llama-server (subprocess + HTTP)
+│   │   └── models.py            # download/verificação dos modelos ggml
+│   │
+│   ├── speech/
+│   │   ├── __init__.py
+│   │   ├── stt.py               # cliente HTTP do whisper-server
+│   │   └── tts.py               # Kokoro (CPU) — síntese por frase
+│   │
+│   ├── vision/
+│   │   ├── __init__.py
+│   │   └── screenshot.py        # mss + resize (imagem pro LLM)
+│   │
+│   ├── audio/
+│   │   ├── __init__.py
+│   │   ├── capture.py           # sounddevice mic input
+│   │   └── playback.py          # sounddevice output
 │   │
 │   └── ui/
 │       ├── __init__.py
-│       ├── app.py               # PySide6 main window (QSS estilizado)
-│       └── widgets.py           # level meter, status badge
+│       └── app.py               # PySide6 main window
 │
-├── assets/
-│   └── icons/                   # ícones do app (ico, png)
+├── bin/                         # binários nativos (gitignored)
+│   ├── whisper-server.exe
+│   ├── llama-server.exe
+│   └── *.dll                    # ggml, ggml-vulkan, etc.
 │
 ├── models/                      # cache de modelos (gitignored)
-│   ├── sherpa/                  # STT: whisper small int8 (ou zipformer)
-│   └── piper/                   # TTS: voz pt-BR (.onnx + .onnx.json)
+│   ├── whisper/                 # modelos ggml do whisper.cpp
+│   └── llm/                     # modelo Q4 do llama.cpp
 │
 ├── installer/
 │   ├── setup.iss                # script Inno Setup
-│   └── bundle_ollama.ps1        # empacota binário do Ollama
+│   └── bundle.ps1               # copia binários + modelos
 │
 ├── scripts/
-│   ├── download_models.py       # baixa modelos sherpa + voz piper
+│   ├── download_models.py       # baixa modelos ggml (whisper + llm) conforme VRAM
+│   ├── download_binaries.py     # baixa binários Vulkan do HuggingFace
+│   ├── build_vulkan.ps1         # compila whisper.cpp + llama.cpp com Vulkan
 │   ├── benchmark_latency.py     # mede latência E2E de cada estágio
 │   └── build.ps1                # PyInstaller → Inno Setup
 │
@@ -251,7 +252,7 @@ voice-assistant/
 └── README.md
 ```
 
-> Mudanças vs. plano anterior (torch): sem `voice_ref.wav`/`extract_voice.py` (Piper usa vozes pré-treinadas, sem clonagem), `transcriber.py` → `recognizer.py` (nomenclatura sherpa), `synthesizer.py` → `piper_engine.py`, `models/{silero,whisper,xtts,ollama}` → `models/{sherpa,piper}`.
+> Mudanças vs. plano anterior (sherpa/piper/ollama): VAD e STT viram `servers/whisper.py` + `speech/stt.py`; `llm/ollama_client` vira `servers/llama.py`; `tts/piper_engine` vira `speech/tts.py` (Kokoro); binários nativos ficam em `bin/`.
 
 ---
 
@@ -259,218 +260,171 @@ voice-assistant/
 
 ---
 
-### Dia 1 — Fundação: Setup + Audio Capture + Cobra VAD + Screenshot
+### Dia 0 — Toolchain + Compilação Vulkan
 
-**Objetivo:** Captura de áudio com segmentação de fala via Picovoice Cobra e screenshot no speech_start.
+**Objetivo:** Binários nativos Vulkan prontos e funcionando no gfx1201.
 
 #### Tarefas
 
-- [ ] Criar venv Python 3.12 (`py -3.12 -m venv .venv`)
-- [ ] `pip install -r requirements.txt`
-- [ ] **Criar conta gratuita em https://console.picovoice.ai/ → obter AccessKey**
-- [ ] Instalar Ollama + `ollama pull qwen3.5:9b`
-- [ ] Verificar GPU: `ollama ps` após um prompt → `PROCESSOR` deve indicar GPU
-- [ ] Implementar `src/audio/capture.py`
-  - Loop `sounddevice.InputStream`: 16kHz, 16-bit, mono, `blocksize=512 (32ms)` — callback-based, sem polling
-  - `cobra.process(pcm_frame)` aplicado dentro do callback (a cada 32ms)
-  - Ring buffer de pré-trigger (~300ms) para não perder o início da fala
-  - `cobra = Cobra(access_key=config.COBRA_ACCESS_KEY)` → `cobra.process(pcm_frame)` retorna float 0–1
-  - Threshold: `probability >= 0.6` = voz ativa
-  - State machine: **TRIGGER** = 5 frames consecutivos de fala (~160ms) abre segmento; **HANGOVER** = 15 frames de silêncio (~480ms) fecha segmento
-  - Callback `on_speech_start` disparado em **todo** speech_start (base do barge-in)
-  - **No `speech_start`, capturar screenshot do desktop via `mss`** → `self._latest_screenshot` (bytes PNG, thread-safe com `threading.Lock`)
-  - Segmento fechado → `vad_segments_q.put()` (descartar segmentos < 250ms)
-- [ ] Teste manual: falar no mic → ver segmentos chegando na fila + screenshot salva
+- [ ] Instalar VS Build Tools (workload C++): `winget install Microsoft.VisualStudio.2022.BuildTools`
+- [ ] Instalar Vulkan SDK: `winget install KhronosGroup.VulkanSDK`
+- [ ] Instalar CMake: `winget install Kitware.CMake`
+- [ ] Clonar e compilar `whisper.cpp`: `cmake -B build -DGGML_VULKAN=1` → `whisper-server.exe` + `ggml-vulkan.dll`
+- [ ] Clonar e compilar `llama.cpp`: mesma flag → `llama-server.exe`
+- [ ] Copiar binários + DLLs para `bin/`
+- [ ] **Validar**: rodar whisper-server e confirmar no log que o backend Vulkan carregou (não CPU)
+- [ ] Baixar modelos ggml (whisper small multilingue + qwen3.5:9b Q4) para `models/`
+- [ ] **Publicar binários no HuggingFace**: criar repo privado e subir `whisper-server.exe`, `llama-server.exe`, `ggml-vulkan.dll`, etc.
+- [ ] Implementar `scripts/download_binaries.py`: baixa os binários do HF se ausentes (verifica hash, retoma download)
+- [ ] Implementar `servers/models.py`: detecção de VRAM via Vulkan → seleção de perfil (leve 4B / padrão 9B)
 
 **Critérios de aceite**
-- Falso-positivo < 2% em 1 minuto de teste (Cobra é superior ao webrtcvad nisso).
-- Início da fala preservado (sem clipping do primeiro fonema).
-- Screenshot capturada em < 20ms no speech_start.
-- Thread de capture roda estável por 5 min sem vazamento de memória.
+- `whisper-server` loga `ggml_vulkan: ... initialized` (ou equivalente) ao iniciar.
+- `llama-server` loga Vulkan/GPU offload ao carregar o modelo.
+- Ambos respondem a uma requisição HTTP de teste.
 
 ---
 
-### Dia 2 — Audição: STT com sherpa-onnx
+### Dia 1 — Captura + VAD + STT streaming (whisper.cpp)
 
-**Objetivo:** Transcrição rápida dos segmentos de voz em CPU.
+**Objetivo:** Fala no mic → transcrição em streaming via whisper-server Vulkan.
 
 #### Tarefas
 
-- [ ] Implementar `scripts/download_models.py`
-  - Baixar `sherpa-onnx-whisper-small` (int8) → `models/sherpa/`
-  - Spike: verificar se existe zipformer streaming pt-BR/multilíngue no catálogo sherpa-onnx; se sim, avaliar como alternativa
-- [ ] Implementar `src/stt/recognizer.py`
-  - Wrapper de `sherpa_onnx.OfflineRecognizer` (whisper small int8)
-  - `transcribe(segment: np.ndarray) -> str` (int16 16kHz → float32 → `AcceptWaveform`)
-  - Singleton para carregar o modelo uma única vez
-- [ ] Integrar ao pipeline
-  - Thread consumidora: `vad_segments_q` → STT → `transcript_q`
-  - Filtrar transcrições vazias, < 3 caracteres e alucinações comuns ("...", "Obrigado.", "Legendas")
-- [ ] Implementar `scripts/benchmark_latency.py` (p50/p95/p99 por estágio)
+- [ ] `scripts/download_models.py`: baixa modelo whisper ggml (multilingue) para `models/whisper/`
+- [ ] `servers/whisper.py`: sobe `whisper-server.exe` como subprocess; verifica porta; restart automático se cair
+- [ ] `audio/capture.py`: sounddevice InputStream (16kHz, int16) → manda chunks p/ whisper-server
+- [ ] `speech/stt.py`: cliente HTTP streaming; recebe linhas transcritas; expõe callback `on_line(text)`
+- [ ] Teste: falar → ver transcrições chegando em tempo real no terminal
 
 **Critérios de aceite**
-- Latência p95 < 1s para segmentos de 5s em CPU.
-- Qualidade de transcrição pt-BR aceitável (WER percebido baixo em frases comuns).
-- Pipeline Capture → STT estável por 10 minutos.
+- Primeira transcrição parcial < 500ms após começar a falar.
+- pt-BR transcrito com precisão aceitável.
+- whisper-server estável por 10 min sem crash.
 
 ---
 
-### Dia 3 — Cérebro: Ollama Visão + Orchestrator + Pré-carga
+### Dia 2 — LLM via llama.cpp (texto + visão)
 
-**Objetivo:** LLM multimodal respondendo em streaming com pré-carga na VRAM.
+**Objetivo:** LLM respondendo em streaming com contexto visual.
 
 #### Tarefas
 
-- [ ] Implementar `src/llm/ollama_client.py`
-  - `ollama.AsyncClient` com `stream_chat(messages) -> AsyncGenerator[str]`
-  - `messages` inclui screenshot como `images: [base64_string]` (formato Ollama vision)
-  - System prompt: "Você é uma assistente de voz concisa que vê o desktop. Responda em no máximo 2 frases, em português."
-  - Janela deslizante de histórico (últimos 5 turnos, sem reenviar imagens antigas)
-  - `preload(model='qwen3.5:9b', keep_alive=-1)` — envia ping e aguarda warm-up
-- [ ] Implementar `src/core/state.py`
-  - Enum `AssistantState` (LISTENING/THINKING/SPEAKING) + callbacks de transição para UI
-- [ ] Implementar `src/core/pipeline.py`
-  - `_consume_transcripts()`: pega `transcript_q` → busca screenshot do capture → envia texto + imagem ao LLM → limpa `_latest_screenshot`
-  - `_consume_llm_stream()`: acumula tokens, corta em frases (`. ! ? \n`) → `llm_stream_q`
-  - LLM task guardada como `asyncio.Task` (cancelável pelo barge-in)
-  - Transições de estado: LISTENING → THINKING → SPEAKING → LISTENING
-- [ ] **Bootstrap com pré-carga (em `main.py`)**
-  - `preload_ollama()` → `ollama.chat(keep_alive=-1)` → confirma `ollama.ps()`
-  - Só inicia UI e pipeline após o modelo estar quente na VRAM
-- [ ] Teste: falar algo sobre o que está na tela → ver resposta multimodal no terminal
+- [ ] `scripts/download_models.py`: baixa qwen3.5:9b Q4 (formato gguf) para `models/llm/`
+- [ ] `servers/llama.py`: sobe `llama-server.exe` (Vulkan, `--n-gpu-layers` máximo, modelo pré-carregado)
+- [ ] `vision/screenshot.py`: `mss` captura desktop → resize 768px → base64
+- [ ] Cliente LLM: POST /completion (ou /chat) com texto + imagem; streaming de tokens
+- [ ] System prompt conciso: "assistente de voz que vê o desktop; responda em no máx. 2 frases"
+- [ ] Teste: falar → ver resposta do LLM token a token no terminal
 
 **Critérios de aceite**
-- Primeiro token do LLM em < 900ms após fim da transcrição (Vulkan, pré-carregado).
-- Streaming contínuo sem travamentos.
-- Histórico mantido corretamente entre turnos (imagem não reenviada nos turnos seguintes).
-- Modelo permanece na VRAM durante toda a sessão (verificar via `ollama ps` após 5 min).
+- Primeiro token < 500ms com modelo pré-carregado (Vulkan).
+- Imagem da tela enviada e compreendida pelo modelo.
+- Histórico com janela deslizante (últimas 5 interações), sem reenviar imagens antigas.
 
 ---
 
-### Dia 4 — Fala: Piper TTS + Playback + Barge-in
+### Dia 3 — Orchestrator asyncio + Barge-in
 
-**Objetivo:** Voz sintetizada em streaming com interrupção natural.
+**Objetivo:** Coordenação completa com interrupção natural.
 
 #### Tarefas
 
-- [ ] Estender `scripts/download_models.py`: baixar voz Piper `pt_BR-faber-medium` → `models/piper/`
-- [ ] Implementar `src/tts/piper_engine.py`
-  - Carregar `PiperVoice.load()` uma vez
-  - `synthesize_stream(sentence) -> Generator[np.ndarray]`: chunks int16 22.05kHz → `tts_audio_q`
-  - Respeitar `interrupt_event` entre frases (aborta síntese restante)
-- [ ] Implementar `src/audio/playback.py`
-  - Thread com `sounddevice.OutputStream` (casar sample rate com a voz)
-  - Lê `tts_audio_q` com timeout → escreve no stream
-  - Checa `interrupt_event` a cada chunk (~20ms) → stop + flush imediato
-  - Expõe `is_active` para o Interruption Manager
-- [ ] Implementar `src/core/interruption.py`
-  - State machine de barge-in conforme seção "Lógica de Barge-in"
-  - Drain de filas com mutex, lock de reentrada, cancel de LLM task
-- [ ] Integração E2E do loop completo
-- [ ] Teste de barge-in: interromper 10x seguidas
+- [ ] `core/state.py`: enum `AssistantState` (LISTENING/THINKING/SPEAKING) + callbacks
+- [ ] `core/events.py`: filas + callbacks tipados (on_line, on_sentence, on_state_change)
+- [ ] `core/orchestrator.py`: coordena capture → STT → LLM → TTS → playback; gerencia `interrupt_event`
+- [ ] Barge-in: speech_start durante playback → drena filas + cancela task LLM
+- [ ] Teste: loop completo + interromper 10x seguidas sem travar
 
 **Critérios de aceite**
-- Primeira sílaba audível em < 2s após fim da fala do usuário.
-- Interrupção com latência < 100ms.
-- 20 ciclos de barge-in consecutivos sem deadlock ou crash.
-- Voz sintetizada inteligível e natural o suficiente.
+- E2E < 2s (fim da fala → primeira sílaba).
+- Barge-in < 100ms; 20 ciclos consecutivos sem deadlock.
+- Estado correto propagado via callbacks.
 
 ---
 
-### Dia 5 — Interface: PySide6 + Integração E2E
+### Dia 4 — TTS (Kokoro) + Playback
 
-**Objetivo:** App desktop com feedback visual em tempo real.
+**Objetivo:** Voz sintetizada em streaming.
 
 #### Tarefas
 
-- [ ] Implementar `src/ui/app.py`
-  - Janela PySide6 (~500x300, dark mode QSS)
-  - Status badge: "Ouvindo..." / "Pensando..." / "Falando..."
-  - Botão mute (pausa capture thread via flag)
-  - Label última transcrição + label resposta em streaming
-- [ ] Implementar `src/ui/widgets.py`
-  - Level meter do mic (RMS dos frames do capture)
-  - Indicador de estado com transição suave via QPropertyAnimation
-- [ ] Integração UI ↔ Pipeline: callbacks → `Signal.emit()` (thread-safe nativo do Qt) — substitui `root.after()` com mais segurança
-- [ ] Implementar `src/main.py`
-  - **Pré-carga do LLM**: `preload_ollama()` → `ollama.chat(model='qwen3.5:9b', messages=[...], keep_alive=-1)` → aguarda warm-up → verifica `ollama.ps()` → só então inicia UI
-  - Bootstrap: demais modelos carregam em background thread (splash)
-  - UI na main thread (Qt event loop) + asyncio loop em thread dedicada
-  - Graceful shutdown (fecha streams, mic, GPU, libera modelo Ollama, cancela tasks)
-- [ ] Implementar `src/config.py` (todos os hiperparâmetros: thresholds VAD, paths, sample rates, modelo Ollama, voz Piper)
+- [ ] `speech/tts.py`: Kokoro (pt-BR), `synthesize_stream(sentence) -> np.ndarray`
+- [ ] `audio/playback.py`: sounddevice OutputStream; lê `tts_audio_q`; monitora `interrupt_event`
+- [ ] Kokoro sintetiza frase por frase conforme chegam do LLM (streaming real)
+- [ ] Teste: resposta falada por completo
+
+**Critérios de aceite**
+- Primeira sílaba < 300ms após a primeira frase do LLM.
+- Voz pt-BR inteligível e natural.
+- Interrupção corta o áudio imediatamente.
+
+---
+
+### Dia 5 — Integração E2E + UI (PySide6)
+
+**Objetivo:** App desktop completo com feedback visual em tempo real.
+
+#### Tarefas
+
+- [ ] `ui/app.py`: janela PySide6 dark; status badge (Ouvindo/Pensando/Falando); mute toggle
+- [ ] `ui` ↔ orchestrator via signals/slots (Qt thread-safe)
+- [ ] `main.py`: bootstrap (sobe servidores, preload modelo, splash) + graceful shutdown
+- [ ] `config.py`: todos os hiperparâmetros centralizados
 - [ ] Teste E2E: 30 min de uso contínuo
 
 **Critérios de aceite**
 - UI responsiva durante todo o pipeline.
 - Status reflete estado real com < 100ms de delay.
-- 30 min de conversa sem degradação.
-- Shutdown libera mic/GPU corretamente.
+- 30 min sem degradação; shutdown libera GPU/mic corretamente.
 
 ---
 
 ### Dia 6 — Empacotamento: PyInstaller + Inno Setup
 
-**Objetivo:** Instalador Windows profissional e distribuível.
+**Objetivo:** Instalador Windows profissional.
 
 #### Tarefas
 
-- [ ] Spec PyInstaller customizado (`voice_assistant.spec`)
-  - `--onedir`, incluir `models/` como data files
-  - **Hooks custom para `sherpa_onnx`, `piper` e DLLs do `onnxruntime`** (dependências ocultas clássicas)
-  - Incluir `_sounddevice_data` (DLL portaudio)
-- [ ] Implementar `scripts/build.ps1`: PyInstaller → `dist/` → Inno Setup
-- [ ] `installer/setup.iss`
-  - Install dir: `%LOCALAPPDATA%\VoiceAssistant`
-  - Detectar Ollama; se ausente, instalar ou guiar download
-  - Atalhos Desktop + Start Menu, uninstaller limpo
-- [ ] Estratégia Ollama: Opção B (recomendada) — detectar instalação existente + download guiado no primeiro run
+- [ ] Spec PyInstaller: incluir `bin/` (binários Vulkan) como data files; hooks p/ `kokoro`
+- [ ] `scripts/build.ps1`: PyInstaller → `dist/` → Inno Setup
+- [ ] `installer/setup.iss`: `%LOCALAPPDATA%\VoiceAssistant`; atalhos; uninstaller limpo
+- [ ] Estratégia de distribuição: detectar Vulkan runtime (presente nos drivers AMD/NVIDIA/Intel modernos)
+- [ ] **First-run flow**: splash com barra de progresso baixando binários + modelos (perfil conforme VRAM)
+- [ ] **Instalador leve**: sem modelos embutidos (~100MB); modelos baixados no first-run do HuggingFace
 - [ ] Teste em máquina limpa (VM)
 
 **Critérios de aceite**
 - Instalador funciona em Windows 11 fresh (sem Python).
-- First-launch < 30s (modelos cacheados).
-- Instalador < 2GB (sem torch, o footprint cai muito vs. plano anterior).
+- Vulkan detectado corretamente em GPUs variadas (AMD/NVIDIA/Intel).
+- Instalador leve (~100MB, sem modelos); first-run baixa só o perfil escolhido (leve ~2.5GB / padrão ~6GB).
+- Seleção de modelo por VRAM funciona: detecta e sugere perfil, permite troca manual.
 - Uninstaller remove 100% dos arquivos.
-- `pip freeze` final: **zero** ocorrências de torch/CUDA.
 
 ---
 
-## requirements.txt (Dia 1)
+## requirements.txt (referência)
 
 ```
-# --- Screenshot (C puro) ---
-mss>=9.0.0
-Pillow>=10.0.0
-
-# --- Audio I/O (PortAudio, mantido ativamente) ---
+# Audio I/O
 sounddevice>=0.5.0
 numpy>=1.24,<2.0
 
-# --- VAD: Picovoice Cobra (deep-learning, probabilidade 0–1) ---
-pvcobra>=2.0.0
+# Screenshot
+mss>=10.0.0
+Pillow>=10.0.0
 
-# --- STT: sherpa-onnx (ONNX Runtime, sem torch) ---
-sherpa-onnx>=1.12.0
+# TTS (Kokoro)
+kokoro>=0.9.4
 
-# --- TTS: Piper (ONNX) ---
-piper-tts==1.3.0
+# HTTP clients (servidores)
+httpx>=0.27.0
 
-# --- LLM: cliente Ollama (server roda Vulkan/AMD) ---
-ollama>=0.4.0
-
-# --- UI ---
+# UI
 PySide6>=6.7.0
 ```
 
-> Subconjunto mínimo do Dia 1: `pyaudio`, `numpy`, `pvcobra`, `mss`, `Pillow`. O resto pode ser instalado junto — não conflita.
-
-## requirements-dev.txt
-
-```
-pytest>=8.0.0
-ruff>=0.6.0
-mypy>=1.10.0
-```
+> Subconjunto mínimo do Dia 1: `sounddevice`, `numpy`, `httpx`. O resto pode ser instalado junto.
 
 ---
 
@@ -478,38 +432,45 @@ mypy>=1.10.0
 
 | Risco | Probabilidade | Impacto | Mitigação |
 |---|---|---|---|
-| Ollama cair em CPU (GPU AMD não detectada) | Média | Alto | `ollama ps` p/ verificar; atualizar Ollama; fallback CPU documentado |
-| Picovoice AccessKey expirada / limite de uso excedido | Baixa | Alto | Key gratuita cobre 3h/mês de áudio — monitorar no console; fallback para webrtcvad como plano B |
-| webrtcvad falso-positivo com ruído ambiente | Alta | Médio | aggressiveness=3, hangover maior, filtro RMS |
-| whisper small int8 lento em CPU antiga | Média | Alto | downgrade p/ base/tiny; avaliar zipformer streaming |
-| Qwen VL não suportar bem português + visão simultâneos | Baixa | Médio | testar `qwen3.5:4b` como alternativa mais leve; ajustar prompt |
-| Voz Piper pt-BR pouco natural | Baixa | Médio | testar outras vozes pt-BR do catálogo Piper |
-| DLLs onnxruntime/sherpa ausentes no .exe | Alta | Alto | hooks PyInstaller custom + teste em VM limpa |
-| Conflito threads + UI | Médio | Baixo | Qt signals/slots são thread-safe por padrão; nunca acessar widget diretamente de worker thread |
-| Tamanho do instalador | Baixa | Baixo | Sem torch: footprint total ~1.5-2GB |
+| Vulkan não inicializar no gfx1201 | Média | Alto | Testar no Dia 0; fallback para HIP/ROCm ou CPU documentado |
+| Compilação C++ falha no Windows | Média | Alto | Seguir guia do whisper.cpp; usar VS Build Tools + Vulkan SDK; logs |
+| whisper.cpp VAD/STT pt-BR ruim | Média | Médio | Modelo multilingue; ajustar `--vad-threshold` e `--language pt` |
+| Kokoro pt-BR precisa de espeak-ng | Baixa | Médio | Instalar espeak-ng (MSI) ou usar voz Kokoro pt-br dedicada |
+| llama.cpp visão (mmproj) complicado | Média | Médio | Usar modelo Q4 com mmproj do mesmo release; testar no Dia 2 |
+| DLLs Vulkan ausentes no instalador | Média | Alto | Incluir `ggml-vulkan.dll` + testar em VM limpa |
+| Conflito threads + UI | Baixa | Baixo | Qt signals/slots são thread-safe por padrão |
+| Barge-in com VAD do whisper-server | Média | Alto | Monitorar evento de speech_start; fallback para VAD próprio |
+| Download first-run falha (rede/quota HF) | Média | Alto | Retomar download; verificar hash; fallback para espelho/URL alternativo |
+| VRAM insuficiente no perfil escolhido | Média | Médio | Detecção de VRAM via Vulkan; sugerir perfil leve; aviso claro |
+| Binários não versionados quebram o app | Baixa | Alto | Hash verificado no download; versão fixa no repo HF; changelog |
 
 ---
 
 ## Comandos de Setup Rápido
 
 ```powershell
-# 1. Ambiente virtual (Python 3.12)
+# 1. Toolchain (uma vez)
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+winget install KhronosGroup.VulkanSDK
+winget install Kitware.CMake
+
+# 2. Compilar whisper.cpp + llama.cpp (Vulkan)
+git clone https://github.com/ggml-org/whisper.cpp && cd whisper.cpp
+cmake -B build -DGGML_VULKAN=1 -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release -j
+git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp
+cmake -B build -DGGML_VULKAN=1 -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release -j
+
+# 3. Copiar binários para bin/
+# (whisper-server.exe, llama-server.exe + ggml*.dll)
+
+# 4. Ambiente Python 3.12
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-
-# 2. Dependências
 pip install -r requirements.txt
 
-# 3. Picovoice AccessKey (gratuita)
-#    Acesse https://console.picovoice.ai/ → crie conta → copie a key
-#    Crie a variável de ambiente:
-[System.Environment]::SetEnvironmentVariable('PICOCOBRA_ACCESS_KEY', 'sua-key-aqui', 'User')
-
-# 4. Ollama + modelo LLM
-winget install Ollama.Ollama
-ollama pull qwen3.5:9b
-
-# 5. Modelos STT + voz TTS
+# 5. Baixar modelos
 python scripts/download_models.py
 
 # 6. Rodar o app
@@ -521,14 +482,13 @@ python src/main.py
 ## Definição de Pronto (DoD)
 
 - [ ] App roda 1 hora sem crash ou vazamento de memória.
-- [ ] Latência E2E (fim da fala → primeira sílaba) < 2.5s.
+- [ ] Latência E2E (fim da fala → primeira sílaba) < 2s.
 - [ ] Barge-in funciona 20/20 tentativas consecutivas.
 - [ ] Interrupção com latência < 100ms.
-- [ ] LLM pré-carregado na VRAM desde o boot (verificado via `ollama ps` em qualquer momento da sessão).
-- [ ] Screenshot capturada e enviada ao LLM corretamente no speech_start (resposta contextual ao desktop).
+- [ ] STT e LLM rodando na GPU via Vulkan (verificado no log dos servidores).
+- [ ] Screenshot capturada e enviada ao LLM corretamente no speech_start.
 - [ ] Instalador funciona em Windows 11 sem Python pré-instalado.
-- [ ] Ollama rodando na GPU AMD (Vulkan) — verificado via `ollama ps`.
+- [ ] Vulkan detectado corretamente em GPUs variadas (AMD/NVIDIA/Intel).
 - [ ] README com GIF de demonstração + instruções de instalação.
 - [ ] Código tipado (mypy clean) e lint (ruff clean).
-- [ ] `pip freeze` sem nenhuma dependência torch/CUDA.
-- [ ] Modelo permanece na VRAM por toda a sessão (sem unload automático).
+- [ ] `pip freeze` sem nenhuma dependência torch/CUDA no pipeline.
