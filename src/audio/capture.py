@@ -14,11 +14,12 @@ CHANNELS = 1
 DTYPE = np.int16
 
 # VAD state machine tuning (all values in frames at 32ms each)
-VAD_THRESHOLD = 0.5 # speech probability cutoff
-TRIGGER_FRAMES = 5 # ~160ms of continous speech to open a segment
+VAD_THRESHOLD = 0.8 # speech probability cutoff (0.5 deixa música passar como fala)
+TRIGGER_FRAMES = 10 # ~320ms of continous speech to open a segment
 HANGOVER_FRAMES = 15
 PRE_TRIGGER_FRAMES = 10
 MIN_SPEECH_SAMPLES = int(SAMPLE_RATE * 0.25)
+RMS_THRESHOLD = 300.0 # abaixo disso descarta como ruído/música de fundo
 
 class AudioCapture:
     # Captures audio from the default input device, runs Silero VAD, segments, speech, captures a desktop screenshot on speech_start
@@ -50,6 +51,10 @@ class AudioCapture:
         self._screenshot_lock = threading.Lock() # protects _latest_screenshot
         self._mss = MSS()
 
+        # Quando True, o callback descarta áudio (evita eco do próprio assistente)
+        self._muted = False
+        self._mute_lock = threading.Lock()
+
         self._stream: Optional[sd.InputStream] = None
         self._on_speech_start_cb: Optional[callable] = None
 
@@ -58,6 +63,14 @@ class AudioCapture:
         monitor = self._mss.monitors[1]
         shot = self._mss.grab(monitor)
         return mss.tools.to_png(shot.rgb, shot.size) #type: ignore
+
+    def set_muted(self, muted: bool) -> None:
+        # Quando True, descarta áudio no callback (evita o eco do próprio TTS).
+        # Deve ser chamado pelo playback quando começa/para de tocar.
+        with self._mute_lock:
+            self._muted = muted
+        if not muted and self._is_speech:
+            self._end_speech()
 
     def _start_speech(self) -> None:
         # Transition IDLE -> Speaking. Prepends the ring buffer to the segment
@@ -100,6 +113,29 @@ class AudioCapture:
         if self.stop_event.is_set():
             raise sd.CallbackStop
 
+        # Eco do próprio TTS: enquanto o assistente fala, o VAD continua rodando
+        # apenas para detectar barge-in. Se um segmento já foi aberto por
+        # barge-in, os frames continuam acumulando normalmente.
+        with self._mute_lock:
+            if self._muted and not self._is_speech:
+                frame = indata[:, 0].copy()
+                self._ring_buffer.append(frame)
+                if len(self._ring_buffer) > PRE_TRIGGER_FRAMES:
+                    self._ring_buffer.pop(0)
+                frame_tensor = torch.from_numpy(frame.astype(np.float32) / 32768.0)
+                prob = self._model(frame_tensor, SAMPLE_RATE).item()
+                rms = float(np.sqrt(np.mean(frame.astype(np.float32) ** 2)))
+                # fala provável E energia alta => usuário quer interromper
+                if prob >= VAD_THRESHOLD and rms >= RMS_THRESHOLD * 1.5:
+                    if self._on_speech_start_cb is not None:
+                        self._on_speech_start_cb()
+                    # abre segmento já, p/ não perder a fala do barge-in
+                    self._is_speech = True
+                    self._speech_frames = 1
+                    self._silence_frames = 0
+                    self._speech_buffer = list(self._ring_buffer[:-1])
+                return
+
         # Convert (frames, channels) to 1-D mono int16 for downstream use
         frame = indata[:, 0].copy()
 
@@ -113,24 +149,27 @@ class AudioCapture:
         frame_tensor = torch.from_numpy(frame.astype(np.float32) / 32768.0)
         prob = self._model(frame_tensor, SAMPLE_RATE).item()
 
+        # Filtro de energia: música/ruído tem RMS baixo; fala humana próxima é alto.
+        rms = float(np.sqrt(np.mean(frame.astype(np.float32) ** 2)))
+
         if not self._is_speech:
-            # IDLE> count consecutive positive frames; only open the segment once we hit TRIGGER_FRAMES
-            if prob >= VAD_THRESHOLD:
+            # IDLE: só abre segmento se for fala provável E com energia suficiente
+            if prob >= VAD_THRESHOLD and rms >= RMS_THRESHOLD:
                 self._trigger_count += 1
                 if self._trigger_count >= TRIGGER_FRAMES:
                     self._start_speech()
-                else:
-                    self._trigger_count = 0
             else:
-                # Speaking: keep appending frames. Speech frames clear the hangover; silence frames increment it until the segment closes
-                if prob >= VAD_THRESHOLD:
-                    self._speech_buffer.append(frame)
-                    self._speech_frames += 1
-                    self._silence_frames = 0
-                else:
-                    self._speech_buffer.append(frame)
-                    self._silence_frames += 1
-                    if self._silence_frames >= HANGOVER_FRAMES:
+                self._trigger_count = 0
+        else:
+            # SPEAKING: fala clara mantém; silêncio incrementa o hangover
+            if prob >= VAD_THRESHOLD and rms >= RMS_THRESHOLD:
+                self._speech_buffer.append(frame)
+                self._speech_frames += 1
+                self._silence_frames = 0
+            else:
+                self._speech_buffer.append(frame)
+                self._silence_frames += 1
+                if self._silence_frames >= HANGOVER_FRAMES:
                         self._end_speech()
     def set_on_speech_start(self, cb: callable) -> None:
         # Register an optional callback fired at every speech_start

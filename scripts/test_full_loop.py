@@ -1,19 +1,13 @@
-"""Entry point for Voice Assistant.
-Este módulo monta toda a infraestrutura (captura, STT, TTS, pipeline LLM)
-e inicia o ciclo assíncrono da assistente.
-"""
-
 import asyncio
 import queue
-import threading
 import sys
+import threading
 import time
 from pathlib import Path
 
-# Garantir que o diretório raiz esteja no sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.audio.capture import AudioCapture
+from src.audio.capture import AudioCapture, SAMPLE_RATE
 from src.audio.playback import PlaybackThread
 from src.core.interruption import InterruptionManager, drain_queue
 from src.core.pipeline import Pipeline
@@ -21,7 +15,6 @@ from src.core.state import StateManager
 from src.llm.ollama_client import OllamaClient
 from src.stt.recognizer import FasterWhisperRecognizer, run_stt_thread
 from src.tts.piper_engine import PiperEngine
-from src.config import Config
 
 
 def run_tts_thread(
@@ -31,9 +24,7 @@ def run_tts_thread(
     interrupt_event: threading.Event,
     engine: PiperEngine,
 ) -> threading.Thread:
-    """Thread que consome frases da fila LLM e gera áudio via PiperEngine."""
-
-    def _loop() -> None:
+    def _loop():
         while not stop_event.is_set():
             try:
                 sentence = llm_q.get(timeout=0.1)
@@ -57,42 +48,38 @@ def run_tts_thread(
 
 
 def main() -> None:
-    cfg = Config()
-
-    # Filas de comunicação
-    vad_q: queue.Queue[object] = queue.Queue()
-    transcript_q: queue.Queue[str] = queue.Queue()
-    llm_q: queue.Queue[str] = queue.Queue()
-    tts_q: queue.Queue[object] = queue.Queue()
+    vad_q: "queue.Queue[object]" = queue.Queue()
+    transcript_q: "queue.Queue[str]" = queue.Queue()
+    llm_q: "queue.Queue[str]" = queue.Queue()
+    tts_q: "queue.Queue[object]" = queue.Queue()
 
     stop = threading.Event()
     interrupt = threading.Event()
 
-    # Gerenciadores de estado e interrupção
-    state_mgr = StateManager()
-    state_mgr.on_change(lambda o, n: print(f"  [state] {o.value} -> {n.value}"))
-    inter_mgr = InterruptionManager(interrupt)
+    sm = StateManager()
+    sm.on_change(lambda o, n: print(f"  [state] {o.value} -> {n.value}"))
+    mgr = InterruptionManager(interrupt)
 
-    # Captura de áudio + VAD
+    # ---- Captura (mic + VAD + screenshot) ----
     capture = AudioCapture(vad_q, stop)
-    capture.set_on_speech_start(lambda: inter_mgr.trigger_if_barge_in())
+    capture.set_on_speech_start(lambda: print("  [capture] speech_start") or mgr.trigger_if_barge_in())
     capture.start()
-    print("=== Início da assistente. Fale algo! (Ctrl+C para parar) ===")
+    print("=== Day 4: loop completo. Fale algo! Ctrl+C para parar ===")
 
-    # STT
+    # ---- STT ----
     recognizer = FasterWhisperRecognizer()
     run_stt_thread(vad_q, transcript_q, stop, recognizer)
     print("  [stt] thread iniciada")
 
-    # TTS + Playback
+    # ---- TTS + Playback ----
     engine = PiperEngine()
     run_tts_thread(llm_q, tts_q, stop, interrupt, engine)
     playback = PlaybackThread(tts_q, stop, sample_rate=engine.sample_rate, interrupt_event=interrupt)
     playback.start()
     print("  [tts/playback] iniciados")
 
-    # Mute enquanto o playback está ativo
-    def _mute_while_playing() -> None:
+    # evita o eco: mute no capture enquanto o assistente fala
+    def _mute_while_playing():
         last = False
         while not stop.is_set():
             active = playback.is_active
@@ -103,35 +90,24 @@ def main() -> None:
 
     threading.Thread(target=_mute_while_playing, name="MuteSync", daemon=True).start()
 
-    # Sincronizar estado de playback com o gerenciador de interrupção
-    def _monitor_playback() -> None:
+    # sincroniza o estado "tocando?" do playback com o interruption manager
+    def _sync_playback_state():
+        mgr.set_playback_active(playback.is_active)
+
+    def _monitor_playback():
         while not stop.is_set():
-            inter_mgr.set_playback_active(playback.is_active)
+            _sync_playback_state()
             time.sleep(0.05)
 
     threading.Thread(target=_monitor_playback, name="PlaybackMonitor", daemon=True).start()
 
-    # Pipeline LLM
-    pipeline = Pipeline(
-        transcript_q,
-        llm_q,
-        interrupt,
-        state_mgr,
-        stop,
-        get_screenshot=capture.get_latest_screenshot,
-    )
-    client = OllamaClient(model=cfg.llm_model)
+    # ---- Pipeline (LLM) ----
+    pipeline = Pipeline(transcript_q, llm_q, interrupt, sm, stop, get_screenshot=capture.get_latest_screenshot)
+    client = OllamaClient()
     pipeline.set_llm_client(client)
+    asyncio.run(pipeline.run())
 
-    try:
-        asyncio.run(pipeline.run())
-    except KeyboardInterrupt:
-        print("\n[shutdown] Ctrl+C – finalizando...")
-    finally:
-        stop.set()
-        pipeline.shutdown()
-        capture.stop()
-        print("[shutdown] Assistente encerrada.")
+    stop.set()
 
 
 if __name__ == "__main__":
