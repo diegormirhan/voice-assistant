@@ -2,36 +2,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-MODELS = ROOT / "models"
-
-# (destino, url)
-FILES = [
-    # VAD Silero (ONNX)
-    ("vad/silero_vad.onnx",
-     "https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx"),
-
-    # STT Whisper (ggml, multilingue)
-    ("whisper/ggml-small.bin",
-     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"),
-
-    # LLM Qwen3.5-9B (Q4_K_M, com visão)
-    ("llm/Qwen3.5-9B-Q4_K_M.gguf",
-     "https://huggingface.co/jc-builds/Qwen3.5-9B-VLM-Q4_K_M-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf"),
-
-    # mmproj (projetor de visão do LLM)
-    ("llm/mmproj-F16.gguf",
-     "https://huggingface.co/jc-builds/Qwen3.5-9B-VLM-Q4_K_M-GGUF/resolve/main/mmproj-F16.gguf"),
-
-     # piper tts (modelo text-to-speech)
-     ("piper/pt_BR-faber-medium.onnx",
-      "https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx"),
-
-    ("piper/pt_BR-faber-medium.onnx.json",
-     "https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx.json"),
-
-]
-
+from servers.models import MODELS, all_downloads
 
 def download(dest: str, url: str) -> None:
     target = MODELS / dest
@@ -56,7 +27,12 @@ def download(dest: str, url: str) -> None:
 
 
 def main() -> None:
-    for dest, url in FILES:
+    profile = sys.argv[1] if len(sys.argv) > 1 else "padrao"
+    if profile not in ("leve", "padrao"):
+        print("Uso: python scripts/download_models.py [leve|padrao]")
+        sys.exit(1)
+    print(f"Perfil: {profile}")
+    for dest, url in all_downloads(profile):
         download(dest, url)
 
 

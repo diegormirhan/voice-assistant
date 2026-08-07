@@ -11,3 +11,8 @@ class SentenceBuffer:
             self._buffer = ""
             return sentence
         return None
+
+    def flush(self):
+        sentence = self._buffer.strip()
+        self._buffer = ""
+        return sentence or None

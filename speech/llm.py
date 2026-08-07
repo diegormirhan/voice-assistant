@@ -1,5 +1,17 @@
 import json, httpx
 
+# Instructions given to the model before every prompt.
+# TTS cannot pronounce symbols, emojis or special characters.
+SYSTEM_PROMPT = (
+    "Você é um assistente de voz pessoal e pode ver a tela do usuário quando uma imagem é enviada. "
+    "Números por extenso. Use frases curtas e naturais, mas que sejam explicativas ao que o usuário pede."
+    "Só mencione o conteúdo da tela se o usuário perguntar ou for necessário."
+    "Responda apenas com texto falável: sem emojis, símbolos, marcadores, markdown, cifrões, abreviações ou asterísco. "
+)
+
+MAX_HISTORY = 5
+
+
 class LlamaClient:
     """Streaming client for the llama-server (OpenAI-compatible API)."""
 
@@ -7,36 +19,60 @@ class LlamaClient:
         self._url = url
         self._model = model
         self._client = httpx.AsyncClient(timeout=None)
+        self._history = []
 
-    async def stream(self, prompt: str):
+    async def stream(self, prompt: str, image_b64: str = ""):
         """Yields response tokens one by one (streaming)."""
+        content = prompt
+        if image_b64:
+            content = [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
+                },
+                {"type": "text", "text": prompt},
+            ]
+
         payload = {
             "model": self._model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                *self._history,
+                {"role": "user", "content": content},
+            ],
             "stream": True,
         }
 
-        async with self._client.stream(
-            "POST", f"{self._url}/v1/chat/completion", json=payload
-        ) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                line = line.strip()
-                if not line or not line.startswith("data:"):
-                    continue
-                data = line[len("data:"):].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    obj = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
+        answer = ""
+        try:
+            async with self._client.stream(
+                "POST", f"{self._url}/v1/chat/completions", json=payload
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[len("data:"):].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        obj = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
 
-                choice = (obj.get("choices") or [{}])[0]
-                delta = choice.get("delta") or choice.get("message") or {}
-                token = delta.get("content")
-                if token:
-                    yield token
+                    choice = (obj.get("choices") or [{}])[0]
+                    delta = choice.get("delta") or choice.get("message") or {}
+                    token = delta.get("content")
+                    if token:
+                        answer += token
+                        yield token
+        finally:
+            # Save history even if the consumer aborts early (barge-in,
+            # first-sentence-only benchmark) — otherwise the LLM forgets.
+            self._history.append({"role": "user", "content": prompt})
+            self._history.append({"role": "assistant", "content": answer})
+            self._history = self._history[-2 * MAX_HISTORY:]
 
     async def close(self):
         # Releases the HTTP connection pool on shutdown.
