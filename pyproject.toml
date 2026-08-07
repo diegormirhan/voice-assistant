@@ -10,6 +10,8 @@ dependencies = [
     "httpx>=0.28",
     "soundfile>=0.14",
     "piper-tts>=1.6.0",
+    "mss>=10.2.0",
+    "pillow>=12.3.0",
 ]
 
 [dependency-groups]
