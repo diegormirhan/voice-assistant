@@ -15,13 +15,13 @@ Todos os modelos de inferência pesada rodam na **mesma infraestrutura**: a bibl
 
 - **STT + VAD**: `whisper.cpp` (whisper-server, Vulkan)
 - **LLM (texto + visão)**: `llama.cpp` (llama-server, Vulkan)
-- **TTS**: Kokoro (82M, CPU) — leve o suficiente pra rodar em CPU com qualidade alta
+- **TTS**: Piper (`pt_BR-faber-medium`, ONNX/CPU) — streaming nativo por frase, voz pt-BR natural
 
 Esses servidores C++ rodam como **processos separados** (subprocesses) orquestrados por um Python limpo via HTTP. Isso permite empacotar o app Windows com os binários nativos prontos — sem dependências Python frágeis, sem torch, sem CUDA.
 
 ### Diferenciais de portfólio
 - **Engenharia de sistemas**: orchestrator asyncio + subprocesses de servidores C++ + barge-in consistente.
-- Pipeline Edge AI multimodal **sem PyTorch/CUDA**: VAD+STT (ggml) → Screenshot + LLM (ggml/Vulkan) → TTS (Kokoro).
+- Pipeline Edge AI multimodal **sem PyTorch/CUDA**: VAD+STT (ggml) → Screenshot + LLM (ggml/Vulkan) → TTS (Piper ONNX).
 - **Uma infraestrutura GPU só** (Vulkan) para STT e LLM — decisão arquitetural limpa e portável.
 - Empacotamento como produto desktop (.exe + instalador) com binários nativos Vulkan.
 
@@ -41,7 +41,7 @@ Esses servidores C++ rodam como **processos separados** (subprocesses) orquestra
 | VAD | Silero-VAD (ggml, embutido no whisper.cpp) | **GPU (Vulkan)** | Vem junto do whisper.cpp (`--vad`); ~864KB |
 | STT | whisper.cpp (ggml) | **GPU (Vulkan)** | streaming real, multilingue (pt-BR), sem janela fixa de 30s |
 | LLM (visão) | llama.cpp (ggml) | **GPU (Vulkan)** | qwen3.5:9b Q4 (~5.5GB); pré-carregado na VRAM |
-| TTS | Kokoro (82M) | CPU | 82M params; pt-BR; qualidade alta; CPU com folga |
+| TTS | Piper (`pt_BR-faber-medium`) | CPU | ONNX; streaming por frase; voz pt-BR feminina |
 
 > **A aceleração em GPU cobre STT e LLM** — os dois gargalos. O TTS (82M) roda em CPU sem comprometer o orçamento. Vulkan é o backend cross-vendor: os mesmos binários funcionam em AMD, NVIDIA e Intel.
 
@@ -55,7 +55,7 @@ Esses servidores C++ rodam como **processos separados** (subprocesses) orquestra
 |---|---|---|
 | VAD + STT | `whisper.cpp` (whisper-server) | GGML + Vulkan; streaming; VAD Silero embutido; multilingue |
 | LLM | `llama.cpp` (llama-server) | GGML + Vulkan; texto + visão (qwen3.5:9b); pré-carregado |
-| TTS | Kokoro (`kokoro` 82M) | Apache-2.0; pt-BR; qualidade alta; CPU leve |
+| TTS | Piper (`piper-tts`, ONNX) | ONNX Runtime; sem torch; voz pt-BR |
 | Screenshot | `mss` (C) + `Pillow` | Captura ~5ms; resize antes de enviar ao LLM |
 | Audio I/O | `sounddevice` | Capture + playback unificados via PortAudio; callback-based |
 | Orquestração | `asyncio` + `queue.Queue` + `threading.Event` | Concorrência previsível com barge-in |
@@ -63,7 +63,7 @@ Esses servidores C++ rodam como **processos separados** (subprocesses) orquestra
 | Binários nativos | CMake + `-DGGML_VULKAN=1` | Compila whisper-server/llama-server Vulkan uma vez; distribui no app |
 | Empacotamento | PyInstaller + Inno Setup | .exe standalone + instalador Windows |
 
-**Python: 3.12** — wheels garantidos para `sounddevice`, `Pillow`, `PySide6`, `kokoro`; sem a restrição do torch-directml.
+**Python: 3.12** — wheels garantidos para `sounddevice`, `Pillow`, `PySide6`, `piper-tts`; sem a restrição do torch-directml.
 
 ---
 
@@ -95,7 +95,7 @@ Esses servidores C++ rodam como **processos separados** (subprocesses) orquestra
                                                     │ frases (streaming)
                                                     ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│   speech/tts.py (Kokoro, CPU) → áudio → audio/playback.py (sounddevice)│
+│   speech/tts.py (Piper, CPU) → áudio → audio/playback.py (sounddevice)│
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -114,7 +114,7 @@ Esses servidores C++ rodam como **processos separados** (subprocesses) orquestra
 | Main | Qt event loop | signals | render UI |
 | Capture | `sd.InputStream(callback)` | callback | mic → manda p/ whisper-server |
 | STT consumer | `httpx` streaming | I/O | recebe transcrições do whisper-server |
-| LLM consumer | `httpx` streaming | I/O | recebe frases do llama-server → Kokoro |
+| LLM consumer | `httpx` streaming | I/O | recebe frases do llama-server → Piper |
 | Playback | `tts_q.get(timeout)` | fila + stream | escreve áudio, monitora interrupt |
 
 ### Filas (todas `queue.Queue` thread-safe)
@@ -143,7 +143,7 @@ Esses servidores C++ rodam como **processos separados** (subprocesses) orquestra
 | VAD endpoint | < 100ms |
 | STT (whisper.cpp, Vulkan, segmento 3-6s) | 200–600ms |
 | LLM primeiro token (llama.cpp Vulkan, pré-carregado) | 200–500ms |
-| TTS primeira frase (Kokoro, CPU) | 150–300ms |
+| TTS primeira frase (Piper, CPU) | 150–300ms |
 | **E2E (fim da fala → primeira sílaba)** | **< 2s** |
 
 ---
@@ -157,25 +157,24 @@ O repositório GitHub guarda **apenas o código** (Python + scripts + configs). 
 | Código Python | GitHub (repo) | leve (~1MB) |
 | Binários Vulkan (`whisper-server.exe`, `llama-server.exe`, `ggml-vulkan.dll`) | **HuggingFace** (repo privado/público) | 200-400MB; compilados com Vulkan por você |
 | Modelos GGUF/ggml | **HuggingFace** (repos oficiais unsloth/jc-builds) | ~6.7GB; não versionar |
-| Voz Kokoro | HuggingFace | ~200MB |
+| Voz Piper | HuggingFace (rhasspy/piper-voices) | ~60MB |
 
 - `.gitignore` bloqueia `bin/` e `models/`.
 - **First-run**: o app baixa binários + modelos automaticamente com barra de progresso.
-- Licenças: binários whisper.cpp/llama.cpp são MIT (redistribuíveis); modelos Qwen3.5 e Kokoro permitem redistribuição com atribuição.
+- Licenças: binários whisper.cpp/llama.cpp são MIT (redistribuíveis); modelos Qwen3.5 e Piper permitem redistribuição com atribuição.
 
-### Seleção de modelo conforme VRAM
+### Seleção de modelo por escolha manual
 
-No first-run, o app **detecta a VRAM da GPU** (via Vulkan) e oferece escolha ao usuário:
+No first-run, o app **pergunta ao usuário** qual perfil quer usar (sem detecção automática de VRAM):
 
-| Perfil | VRAM mínima | LLM | STT (whisper) | TTS |
-|---|---|---|---|---|
-| **Leve** | 4GB | Qwen3.5-4B Q4 (~2.5GB) | `base` ggml (~142MB) | Kokoro |
-| **Recomendado** | 8GB | Qwen3.5-9B Q4 (~5.5GB) | `small` ggml (~466MB) | Kokoro |
+| Perfil | LLM | STT (whisper) | TTS |
+|---|---|---|---|
+| **Leve** | Qwen3.5-4B Q4 (~2.5GB) | `base` ggml (~142MB) | Piper pt_BR |
+| **Recomendado** | Qwen3.5-9B Q4 (~5.5GB) | `small` ggml (~466MB) | Piper pt_BR |
 
-- Detecção automática: ler VRAM via Vulkan API e sugerir perfil padrão.
-- Usuário pode trocar manualmente (botão "modelo leve / padrão").
-- `models.py` baixa **apenas** o perfil escolhido (evita download desnecessário).
-- Se a VRAM for insuficiente no perfil escolhido, avisa e oferece o menor.
+- Usuário escolhe manualmente ("modelo leve / padrão") no first-run.
+- `servers/models.py` baixa **apenas** o perfil escolhido (evita download desnecessário).
+- O usuário pode trocar o perfil depois nas configurações.
 
 ---
 
@@ -190,9 +189,7 @@ voice-assistant/
 │   │
 │   ├── core/
 │   │   ├── __init__.py
-│   │   ├── events.py            # filas + callbacks tipados
-│   │   ├── state.py             # AssistantState (LISTENING/THINKING/SPEAKING)
-│   │   └── orchestrator.py      # coordena tudo via asyncio
+│   │   └── orchestrator.py      # coordena tudo via asyncio; estado interno
 │   │
 │   ├── servers/
 │   │   ├── __init__.py
@@ -203,7 +200,7 @@ voice-assistant/
 │   ├── speech/
 │   │   ├── __init__.py
 │   │   ├── stt.py               # cliente HTTP do whisper-server
-│   │   └── tts.py               # Kokoro (CPU) — síntese por frase
+│   │   └── tts.py               # Piper (ONNX/CPU) — síntese por frase, streaming
 │   │
 │   ├── vision/
 │   │   ├── __init__.py
@@ -252,7 +249,7 @@ voice-assistant/
 └── README.md
 ```
 
-> Mudanças vs. plano anterior (sherpa/piper/ollama): VAD e STT viram `servers/whisper.py` + `speech/stt.py`; `llm/ollama_client` vira `servers/llama.py`; `tts/piper_engine` vira `speech/tts.py` (Kokoro); binários nativos ficam em `bin/`.
+> Mudanças vs. plano anterior (sherpa/piper/ollama): VAD e STT viram `servers/whisper.py` + `speech/stt.py`; `llm/ollama_client` vira `servers/llama.py`; `tts/piper_engine` vira `speech/tts.py` (Piper); binários nativos ficam em `bin/`.
 
 ---
 
@@ -276,7 +273,7 @@ voice-assistant/
 - [x] Baixar modelos ggml (whisper small multilingue + qwen3.5:9b Q4) para `models/`
 - [ ] **Publicar binários no HuggingFace**: criar repo privado e subir `whisper-server.exe`, `llama-server.exe`, `ggml-vulkan.dll`, etc.
 - [ ] Implementar `scripts/download_binaries.py`: baixa os binários do HF se ausentes (verifica hash, retoma download)
-- [ ] Implementar `servers/models.py`: detecção de VRAM via Vulkan → seleção de perfil (leve 4B / padrão 9B)
+- [ ] Implementar `servers/models.py`: perfis de modelo (leve 4B / padrão 9B) com **escolha manual** do usuário
 
 **Critérios de aceite**
 - `whisper-server` loga `ggml_vulkan: ... initialized` (ou equivalente) ao iniciar.
@@ -333,9 +330,8 @@ voice-assistant/
 
 #### Tarefas
 
-- [ ] `core/state.py`: enum `AssistantState` (LISTENING/THINKING/SPEAKING) + callbacks
-- [ ] `core/events.py`: filas + callbacks tipados (on_line, on_sentence, on_state_change)
-- [ ] `core/orchestrator.py`: coordena capture → STT → LLM → TTS → playback; gerencia `interrupt_event`
+- [ ] `core/orchestrator.py`: coordena capture → STT → LLM → TTS → playback; gerencia `interrupt_event`; estado interno (LISTENING/THINKING/SPEAKING)
+- [ ] Paralelismo real: LLM gera tokens em thread async enquanto o TTS/playback fala em thread separada
 - [ ] Barge-in: speech_start durante playback → drena filas + cancela task LLM
 - [ ] Teste: loop completo + interromper 10x seguidas sem travar
 
@@ -352,10 +348,12 @@ voice-assistant/
 
 #### Tarefas
 
-- [ ] `speech/tts.py`: Piper (`pt_BR-faber-medium`), `synthesize_stream(sentence) -> np.ndarray`
-- [ ] `audio/playback.py`: sounddevice OutputStream; lê `tts_audio_q`; monitora `interrupt_event`
-- [ ] Piper sintetiza frase por frase conforme chegam do LLM (streaming real)
-- [ ] Teste: resposta falada por completo
+- [x] `speech/tts.py`: Piper (`pt_BR-faber-medium`), `synthesize(sentence) -> (bytes, sr)` streaming
+- [x] `audio/playback.py`: sounddevice OutputStream persistente; monitora `interrupt_event`
+- [x] Piper sintetiza frase por frase conforme chegam do LLM (streaming real)
+- [x] `speech/sentence_buffer.py`: acumula tokens do LLM → sentenças (add + flush)
+- [x] `audio/vad.py`: callback `on_speech_start` para barge-in
+- [x] Teste: resposta falada por completo (test_llm_to_tts), barge-in com voz real (test_playback)
 
 **Critérios de aceite**
 - Primeira sílaba < 300ms após a primeira frase do LLM.
