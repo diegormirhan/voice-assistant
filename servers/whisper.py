@@ -12,7 +12,9 @@ class WhisperServer:
 
     def start(self):
         """Launches whisper-server and waits until it accepts requests."""
-        self._proc = subprocess.Popen([str(self._exe), "-m", str(self._model), "--language", "pt", "--port", str(self._port)])
+        self._proc = subprocess.Popen([str(self._exe), "-m", str(self._model),
+                "--language", "pt", 
+                "--port", str(self._port)])
         self._wait_ready()
 
     def _wait_ready(self, timeout: float = 30.0):
@@ -25,11 +27,11 @@ class WhisperServer:
                 return
             except Exception:
                 time.sleep(0.5)
-        raise RuntimeError("whisper-server failed to start")
+        raise RuntimeError("whisper-server failed to start!")
 
     def stop(self):
         if self._proc is not None:
             self._proc.terminate()
-            self._proc.wait(timeout=5)
+            self._proc.wait(timeout=3)
             self._proc = None
 
