@@ -1,7 +1,6 @@
 import numpy as np
 import onnxruntime as ort
 
-
 class SpeechSegmenter:
     """Silero VAD + speech buffering.
 
@@ -16,9 +15,11 @@ class SpeechSegmenter:
     MIN_SPEECH_MS = 250     # ignore segments shorter than this
     HANGOVER_MS = 1000       # silence after speech before closing segment
 
-    def __init__(self, on_segment):
-        """on_segment: callback receiving np.ndarray int16 (full speech)."""
+    def __init__(self, on_segment, on_speech_start=None):
+        """on_segment: callback receiving np.ndarray int16 (full speech).
+        on_speech_start: callback fired the moment speech is detected (barge-in)"""
         self._on_segment = on_segment
+        self._on_speech_start = on_speech_start
 
         # buffer state
         self._buffer = []
@@ -40,6 +41,8 @@ class SpeechSegmenter:
         block_ms = len(block) / self.SAMPLE_RATE * 1000
 
         if prob >= self.VAD_THRESHOLD:
+            if not self._speaking and self._on_speech_start:
+                self._on_speech_start()
             self._speaking = True
             self._speech_ms += block_ms
             self._silence_ms = 0

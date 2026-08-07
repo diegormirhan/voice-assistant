@@ -1,7 +1,6 @@
 import numpy as np
 import sounddevice as sd
 
-
 class AudioCapture:
     """Just captures mic audio. No logic - only raw 32ms blocks."""
 
