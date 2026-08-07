@@ -1,13 +1,16 @@
 [project]
 name = "voice-assistant"
 version = "0.1.0"
+description = "Full-duplex voice assistant with local LLM/STT/TTS"
 requires-python = ">=3.12"
 dependencies = [
-    "httpx>=0.28.1",
-    "kokoro-onnx>=0.5.0",
-    "numpy>=2.5.1",
-    "onnxruntime>=1.28.0",
-    "sounddevice>=0.5.5",
-    "soundfile>=0.14.0",
+    "numpy>=2.0",
+    "sounddevice>=0.5",
+    "onnxruntime>=1.20",
+    "httpx>=0.28",
+    "soundfile>=0.14",
+    "piper-tts>=1.6.0",
 ]
-[tool.uv]
+
+[dependency-groups]
+dev = []
