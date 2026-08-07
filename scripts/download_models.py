@@ -22,6 +22,14 @@ FILES = [
     # mmproj (projetor de visão do LLM)
     ("llm/mmproj-F16.gguf",
      "https://huggingface.co/jc-builds/Qwen3.5-9B-VLM-Q4_K_M-GGUF/resolve/main/mmproj-F16.gguf"),
+
+     # piper tts (modelo text-to-speech)
+     ("piper/pt_BR-faber-medium.onnx",
+      "https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx"),
+
+    ("piper/pt_BR-faber-medium.onnx.json",
+     "https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx.json"),
+
 ]
 
 
