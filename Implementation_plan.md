@@ -266,14 +266,14 @@ voice-assistant/
 
 #### Tarefas
 
-- [ ] Instalar VS Build Tools (workload C++): `winget install Microsoft.VisualStudio.2022.BuildTools`
-- [ ] Instalar Vulkan SDK: `winget install KhronosGroup.VulkanSDK`
-- [ ] Instalar CMake: `winget install Kitware.CMake`
-- [ ] Clonar e compilar `whisper.cpp`: `cmake -B build -DGGML_VULKAN=1` → `whisper-server.exe` + `ggml-vulkan.dll`
-- [ ] Clonar e compilar `llama.cpp`: mesma flag → `llama-server.exe`
-- [ ] Copiar binários + DLLs para `bin/`
-- [ ] **Validar**: rodar whisper-server e confirmar no log que o backend Vulkan carregou (não CPU)
-- [ ] Baixar modelos ggml (whisper small multilingue + qwen3.5:9b Q4) para `models/`
+- [x] Instalar VS Build Tools (workload C++): `winget install Microsoft.VisualStudio.2022.BuildTools`
+- [x] Instalar Vulkan SDK: `winget install KhronosGroup.VulkanSDK`
+- [x] Instalar CMake: `winget install Kitware.CMake`
+- [x] Clonar e compilar `whisper.cpp`: `cmake -B build -DGGML_VULKAN=1` → `whisper-server.exe` + `ggml-vulkan.dll`
+- [x] Clonar e compilar `llama.cpp`: mesma flag → `llama-server.exe`
+- [x] Copiar binários + DLLs para `bin/`
+- [x] **Validar**: rodar whisper-server e confirmar no log que o backend Vulkan carregou (não CPU)
+- [x] Baixar modelos ggml (whisper small multilingue + qwen3.5:9b Q4) para `models/`
 - [ ] **Publicar binários no HuggingFace**: criar repo privado e subir `whisper-server.exe`, `llama-server.exe`, `ggml-vulkan.dll`, etc.
 - [ ] Implementar `scripts/download_binaries.py`: baixa os binários do HF se ausentes (verifica hash, retoma download)
 - [ ] Implementar `servers/models.py`: detecção de VRAM via Vulkan → seleção de perfil (leve 4B / padrão 9B)
@@ -291,16 +291,17 @@ voice-assistant/
 
 #### Tarefas
 
-- [ ] `scripts/download_models.py`: baixa modelo whisper ggml (multilingue) para `models/whisper/`
-- [ ] `servers/whisper.py`: sobe `whisper-server.exe` como subprocess; verifica porta; restart automático se cair
-- [ ] `audio/capture.py`: sounddevice InputStream (16kHz, int16) → manda chunks p/ whisper-server
-- [ ] `speech/stt.py`: cliente HTTP streaming; recebe linhas transcritas; expõe callback `on_line(text)`
-- [ ] Teste: falar → ver transcrições chegando em tempo real no terminal
+- [x] `scripts/download_models.py`: baixa modelo whisper ggml (multilingue) para `models/whisper/`
+- [x] `servers/whisper.py`: sobe `whisper-server.exe` como subprocess; verifica porta; restart automático se cair
+- [x] `audio/capture.py`: sounddevice InputStream (16kHz, int16) → manda chunks p/ whisper-server
+- [x] `audio/vad.py`: Silero VAD (ONNX) → segmentação de fala no endpoint
+- [x] `speech/stt.py`: cliente HTTP streaming; recebe linhas transcritas; expõe callback `on_line(text)`
+- [x] Teste: falar → ver transcrições chegando em tempo real no terminal
 
 **Critérios de aceite**
-- Primeira transcrição parcial < 500ms após começar a falar.
-- pt-BR transcrito com precisão aceitável.
-- whisper-server estável por 10 min sem crash.
+- [ ] Primeira transcrição parcial < 500ms após começar a falar.
+- [x] pt-BR transcrito com precisão aceitável.
+- [ ] whisper-server estável por 10 min sem crash.
 
 ---
 
@@ -310,17 +311,19 @@ voice-assistant/
 
 #### Tarefas
 
-- [ ] `scripts/download_models.py`: baixa qwen3.5:9b Q4 (formato gguf) para `models/llm/`
-- [ ] `servers/llama.py`: sobe `llama-server.exe` (Vulkan, `--n-gpu-layers` máximo, modelo pré-carregado)
+- [x] `scripts/download_models.py`: baixa qwen3.5:9b Q4 (formato gguf) para `models/llm/`
+- [x] `servers/llama.py`: sobe `llama-server.exe` (Vulkan, `--n-gpu-layers` máximo, modelo pré-carregado)
+- [x] `--thinking off` na inicialização do servidor (evita raciocínio interno que atrasa resposta)
+- [x] `speech/llm.py`: cliente HTTP streaming; recebe tokens um a um via `/v1/chat/completions`
 - [ ] `vision/screenshot.py`: `mss` captura desktop → resize 768px → base64
-- [ ] Cliente LLM: POST /completion (ou /chat) com texto + imagem; streaming de tokens
 - [ ] System prompt conciso: "assistente de voz que vê o desktop; responda em no máx. 2 frases"
-- [ ] Teste: falar → ver resposta do LLM token a token no terminal
+- [ ] Histórico com janela deslizante (últimas 5 interações), sem reenviar imagens antigas
+- [x] Teste: falar → ver resposta do LLM token a token no terminal
 
 **Critérios de aceite**
-- Primeiro token < 500ms com modelo pré-carregado (Vulkan).
-- Imagem da tela enviada e compreendida pelo modelo.
-- Histórico com janela deslizante (últimas 5 interações), sem reenviar imagens antigas.
+- [ ] Primeiro token < 500ms com modelo pré-carregado (Vulkan).
+- [ ] Imagem da tela enviada e compreendida pelo modelo.
+- [ ] Histórico com janela deslizante (últimas 5 interações), sem reenviar imagens antigas.
 
 ---
 
@@ -343,20 +346,20 @@ voice-assistant/
 
 ---
 
-### Dia 4 — TTS (Kokoro) + Playback
+### Dia 4 — TTS (Piper) + Playback
 
-**Objetivo:** Voz sintetizada em streaming.
+**Objetivo:** Voz sintetizada em streaming com voz feminina pt-BR.
 
 #### Tarefas
 
-- [ ] `speech/tts.py`: Kokoro (pt-BR), `synthesize_stream(sentence) -> np.ndarray`
+- [ ] `speech/tts.py`: Piper (`pt_BR-faber-medium`), `synthesize_stream(sentence) -> np.ndarray`
 - [ ] `audio/playback.py`: sounddevice OutputStream; lê `tts_audio_q`; monitora `interrupt_event`
-- [ ] Kokoro sintetiza frase por frase conforme chegam do LLM (streaming real)
+- [ ] Piper sintetiza frase por frase conforme chegam do LLM (streaming real)
 - [ ] Teste: resposta falada por completo
 
 **Critérios de aceite**
 - Primeira sílaba < 300ms após a primeira frase do LLM.
-- Voz pt-BR inteligível e natural.
+- Voz pt-BR feminina inteligível e natural (faber-medium).
 - Interrupção corta o áudio imediatamente.
 
 ---
@@ -386,7 +389,7 @@ voice-assistant/
 
 #### Tarefas
 
-- [ ] Spec PyInstaller: incluir `bin/` (binários Vulkan) como data files; hooks p/ `kokoro`
+- [ ] Spec PyInstaller: incluir `bin/` (binários Vulkan) como data files; hooks p/ `piper-tts`
 - [ ] `scripts/build.ps1`: PyInstaller → `dist/` → Inno Setup
 - [ ] `installer/setup.iss`: `%LOCALAPPDATA%\VoiceAssistant`; atalhos; uninstaller limpo
 - [ ] Estratégia de distribuição: detectar Vulkan runtime (presente nos drivers AMD/NVIDIA/Intel modernos)
@@ -414,8 +417,8 @@ numpy>=1.24,<2.0
 mss>=10.0.0
 Pillow>=10.0.0
 
-# TTS (Kokoro)
-kokoro>=0.9.4
+# TTS (Piper - ONNX, sem torch, voz feminina pt-BR)
+piper-tts>=1.6.0
 
 # HTTP clients (servidores)
 httpx>=0.27.0
@@ -425,6 +428,7 @@ PySide6>=6.7.0
 ```
 
 > Subconjunto mínimo do Dia 1: `sounddevice`, `numpy`, `httpx`. O resto pode ser instalado junto.
+> Piper usa ONNX Runtime (já instalado) — não puxa torch.
 
 ---
 
@@ -435,7 +439,7 @@ PySide6>=6.7.0
 | Vulkan não inicializar no gfx1201 | Média | Alto | Testar no Dia 0; fallback para HIP/ROCm ou CPU documentado |
 | Compilação C++ falha no Windows | Média | Alto | Seguir guia do whisper.cpp; usar VS Build Tools + Vulkan SDK; logs |
 | whisper.cpp VAD/STT pt-BR ruim | Média | Médio | Modelo multilingue; ajustar `--vad-threshold` e `--language pt` |
-| Kokoro pt-BR precisa de espeak-ng | Baixa | Médio | Instalar espeak-ng (MSI) ou usar voz Kokoro pt-br dedicada |
+| Piper pt-BR precisa de espeak-ng | Baixa | Médio | Instalar espeak-ng (MSI) ou usar voz Piper pt-br dedicada |
 | llama.cpp visão (mmproj) complicado | Média | Médio | Usar modelo Q4 com mmproj do mesmo release; testar no Dia 2 |
 | DLLs Vulkan ausentes no instalador | Média | Alto | Incluir `ggml-vulkan.dll` + testar em VM limpa |
 | Conflito threads + UI | Baixa | Baixo | Qt signals/slots são thread-safe por padrão |
