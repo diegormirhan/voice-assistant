@@ -12,7 +12,7 @@ class SpeechSegmenter:
     SAMPLE_RATE = 16000
     CONTEXT_SIZE = 64
     VAD_THRESHOLD = 0.5     # speech probability cutoff
-    MIN_SPEECH_MS = 250     # ignore segments shorter than this
+    MIN_SPEECH_MS = 300     # ignore segments shorter than this
     HANGOVER_MS = 1000       # silence after speech before closing segment
 
     def __init__(self, on_segment, on_speech_start=None):
