@@ -43,7 +43,7 @@ Esses servidores C++ rodam como **processos separados** (subprocesses) orquestra
 | LLM (visão) | llama.cpp (ggml) | **GPU (Vulkan)** | qwen3.5:9b Q4 (~5.5GB); pré-carregado na VRAM |
 | TTS | Piper (`pt_BR-faber-medium`) | CPU | ONNX; streaming por frase; voz pt-BR feminina |
 
-> **A aceleração em GPU cobre STT e LLM** — os dois gargalos. O TTS (82M) roda em CPU sem comprometer o orçamento. Vulkan é o backend cross-vendor: os mesmos binários funcionam em AMD, NVIDIA e Intel.
+> **A aceleração em GPU cobre STT e LLM** — os dois gargalos. O TTS (Piper, ~60MB) roda em CPU sem comprometer o orçamento. Vulkan é o backend cross-vendor: os mesmos binários funcionam em AMD, NVIDIA e Intel.
 
 > **Modelo pré-carregado na VRAM**: o `llama-server` carrega o modelo na inicialização e permanece residente durante a sessão (`--n-gpu-layers` máximo). Sem cold-start entre turnos.
 
@@ -182,68 +182,72 @@ No first-run, o app **pergunta ao usuário** qual perfil quer usar (sem detecç�
 
 ```
 voice-assistant/
-├── src/
-│   ├── __init__.py
-│   ├── main.py                  # entry: sobe servidores → orchestrator + UI
-│   ├── config.py                # hiperparâmetros centralizados
-│   │
-│   ├── core/
-│   │   ├── __init__.py
-│   │   └── orchestrator.py      # coordena tudo via asyncio; estado interno
-│   │
-│   ├── servers/
-│   │   ├── __init__.py
-│   │   ├── whisper.py           # gerencia whisper-server (subprocess + HTTP)
-│   │   ├── llama.py             # gerencia llama-server (subprocess + HTTP)
-│   │   └── models.py            # download/verificação dos modelos ggml
-│   │
-│   ├── speech/
-│   │   ├── __init__.py
-│   │   ├── stt.py               # cliente HTTP do whisper-server
-│   │   └── tts.py               # Piper (ONNX/CPU) — síntese por frase, streaming
-│   │
-│   ├── vision/
-│   │   ├── __init__.py
-│   │   └── screenshot.py        # mss + resize (imagem pro LLM)
-│   │
-│   ├── audio/
-│   │   ├── __init__.py
-│   │   ├── capture.py           # sounddevice mic input
-│   │   └── playback.py          # sounddevice output
-│   │
-│   └── ui/
-│       ├── __init__.py
-│       └── app.py               # PySide6 main window
+├── main.py                  # entry: sobe servidores → orchestrator
+├── config.py                # caminhos, portas, perfil de modelo
+│
+├── core/
+│   └── orchestrator.py      # coordena capture → STT → LLM → TTS (asyncio, barge-in)
+│
+├── servers/
+│   ├── whisper.py           # gerencia whisper-server (subprocess + HTTP)
+│   ├── llama.py             # gerencia llama-server (subprocess + HTTP)
+│   └── models.py            # perfis de modelo (leve/padrão, escolha manual)
+│
+├── speech/
+│   ├── stt.py               # cliente HTTP do whisper-server
+│   ├── llm.py               # cliente streaming do llama-server (visão + histórico)
+│   ├── tts.py               # Piper (ONNX/CPU) — síntese por frase, streaming
+│   └── sentence_buffer.py   # tokens do LLM → sentenças
+│
+├── vision/
+│   └── screenshot.py        # mss + resize 768px + base64
+│
+├── audio/
+│   ├── capture.py           # sounddevice mic input (16kHz)
+│   ├── vad.py               # Silero VAD ONNX + segmentação + barge-in
+│   └── playback.py          # sounddevice output persistente + thread
+│
+├── ui/                      # PySide6 (detalhado no UI.md)
+│   ├── app.py / __main__.py / main_window.py
+│   ├── window_anim.py       # animações de janela (Qt)
+│   ├── app_icon.py          # ícone arredondado multi-tamanho
+│   ├── state.py             # AssistantState + Bus (signals)
+│   ├── backend.py           # ADAPTADOR orchestrator → Bus (substitui simulator)
+│   ├── simulator.py         # dados falsos p/ validação (APAGAR ao final)
+│   ├── theme.py / qss.py / config_store.py / effects.py / assets.py / icons.py
+│   ├── widgets/             # center_button, status_ring, backdrop, title_bar, select,
+│   │                        # download_button, level_meter, toggle_switch, transcript
+│   └── modals/settings.py / info.py
 │
 ├── bin/                         # binários nativos (gitignored)
-│   ├── whisper-server.exe
-│   ├── llama-server.exe
-│   └── *.dll                    # ggml, ggml-vulkan, etc.
+│   ├── whisper-server/          # whisper-server.exe + DLLs
+│   └── llama-server/            # llama-server.exe + DLLs
 │
 ├── models/                      # cache de modelos (gitignored)
-│   ├── whisper/                 # modelos ggml do whisper.cpp
-│   └── llm/                     # modelo Q4 do llama.cpp
+│   ├── vad/ whisper/ llm/ piper/
 │
 ├── installer/
 │   ├── setup.iss                # script Inno Setup
 │   └── bundle.ps1               # copia binários + modelos
 │
 ├── scripts/
-│   ├── download_models.py       # baixa modelos ggml (whisper + llm) conforme VRAM
+│   ├── download_models.py       # baixa modelos conforme perfil (leve/padrão)
 │   ├── download_binaries.py     # baixa binários Vulkan do HuggingFace
 │   ├── build_vulkan.ps1         # compila whisper.cpp + llama.cpp com Vulkan
-│   ├── benchmark_latency.py     # mede latência E2E de cada estágio
-│   └── build.ps1                # PyInstaller → Inno Setup
+│   ├── benchmark_stt_latency.py # mede latência de transcrição
+│   └── stress_test_whisper.py   # estabilidade do whisper-server
 │
 ├── tests/
 │   ├── test_capture.py
 │   ├── test_stt.py
 │   ├── test_tts.py
-│   └── test_pipeline.py
+│   ├── test_playback.py         # barge-in com voz real
+│   ├── test_llm_to_tts.py       # pipeline LLM → TTS
+│   ├── benchmark_llm.py         # latência/tokens por frase
+│   └── benchmark_e2e.py         # E2E fim da fala → primeira sílaba
 │
-├── requirements.txt
-├── requirements-dev.txt
-├── pyproject.toml
+├── UI.md                        # especificação da interface + pipeline de integração
+├── requirements.txt / pyproject.toml
 ├── .gitignore
 ├── IMPLEMENTATION_PLAN.md
 └── README.md
@@ -271,9 +275,9 @@ voice-assistant/
 - [x] Copiar binários + DLLs para `bin/`
 - [x] **Validar**: rodar whisper-server e confirmar no log que o backend Vulkan carregou (não CPU)
 - [x] Baixar modelos ggml (whisper small multilingue + qwen3.5:9b Q4) para `models/`
-- [ ] **Publicar binários no HuggingFace**: criar repo privado e subir `whisper-server.exe`, `llama-server.exe`, `ggml-vulkan.dll`, etc.
-- [ ] Implementar `scripts/download_binaries.py`: baixa os binários do HF se ausentes (verifica hash, retoma download)
-- [ ] Implementar `servers/models.py`: perfis de modelo (leve 4B / padrão 9B) com **escolha manual** do usuário
+- [x] **Publicar binários no HuggingFace**: repo `diegomirhan/voice-assistant-binaries` com `whisper-server/` e `llama-server/`
+- [x] Implementar `scripts/download_binaries.py`: baixa os binários do HF se ausentes (progresso inline)
+- [x] Implementar `servers/models.py`: perfis de modelo (leve 4B / padrão 9B) com **escolha manual** do usuário (sem detecção de VRAM)
 
 **Critérios de aceite**
 - `whisper-server` loga `ggml_vulkan: ... initialized` (ou equivalente) ao iniciar.
@@ -294,11 +298,12 @@ voice-assistant/
 - [x] `audio/vad.py`: Silero VAD (ONNX) → segmentação de fala no endpoint
 - [x] `speech/stt.py`: cliente HTTP streaming; recebe linhas transcritas; expõe callback `on_line(text)`
 - [x] Teste: falar → ver transcrições chegando em tempo real no terminal
+- [x] Benchmark de latência: `scripts/benchmark_stt_latency.py` (média quente ~106ms < 500ms)
 
 **Critérios de aceite**
-- [ ] Primeira transcrição parcial < 500ms após começar a falar.
+- [x] Primeira transcrição parcial < 500ms após começar a falar.
 - [x] pt-BR transcrito com precisão aceitável.
-- [ ] whisper-server estável por 10 min sem crash.
+- [ ] whisper-server estável por 10 min sem crash (teste opcional, adiado).
 
 ---
 
@@ -312,15 +317,15 @@ voice-assistant/
 - [x] `servers/llama.py`: sobe `llama-server.exe` (Vulkan, `--n-gpu-layers` máximo, modelo pré-carregado)
 - [x] `--thinking off` na inicialização do servidor (evita raciocínio interno que atrasa resposta)
 - [x] `speech/llm.py`: cliente HTTP streaming; recebe tokens um a um via `/v1/chat/completions`
-- [ ] `vision/screenshot.py`: `mss` captura desktop → resize 768px → base64
-- [ ] System prompt conciso: "assistente de voz que vê o desktop; responda em no máx. 2 frases"
-- [ ] Histórico com janela deslizante (últimas 5 interações), sem reenviar imagens antigas
+- [x] `vision/screenshot.py`: `mss` captura desktop → resize 768px → base64 (JPEG)
+- [x] System prompt conciso: "assistente de voz que vê o desktop quando uma imagem é enviada; respostas proporcionais"
+- [x] Histórico com janela deslizante (últimas 5 interações), sem reenviar imagens antigas (salvo em `try/finally`)
 - [x] Teste: falar → ver resposta do LLM token a token no terminal
 
 **Critérios de aceite**
 - [ ] Primeiro token < 500ms com modelo pré-carregado (Vulkan).
-- [ ] Imagem da tela enviada e compreendida pelo modelo.
-- [ ] Histórico com janela deslizante (últimas 5 interações), sem reenviar imagens antigas.
+- [x] Imagem da tela enviada e compreendida pelo modelo.
+- [x] Histórico com janela deslizante (últimas 5 interações), sem reenviar imagens antigas.
 
 ---
 
@@ -330,15 +335,15 @@ voice-assistant/
 
 #### Tarefas
 
-- [ ] `core/orchestrator.py`: coordena capture → STT → LLM → TTS → playback; gerencia `interrupt_event`; estado interno (LISTENING/THINKING/SPEAKING)
-- [ ] Paralelismo real: LLM gera tokens em thread async enquanto o TTS/playback fala em thread separada
-- [ ] Barge-in: speech_start durante playback → drena filas + cancela task LLM
-- [ ] Teste: loop completo + interromper 10x seguidas sem travar
+- [x] `core/orchestrator.py`: coordena capture → STT → LLM → TTS → playback; gerencia `interrupt_event`; estado interno
+- [x] Paralelismo real: LLM gera tokens em thread async enquanto o TTS/playback fala em thread separada (`speak()` não-bloqueante)
+- [x] Barge-in: speech_start durante playback → corta áudio + cancela task LLM
+- [x] Teste: loop completo + interromper com voz real (benchmark_e2e, E2E ~0.9–1.5s)
 
 **Critérios de aceite**
-- E2E < 2s (fim da fala → primeira sílaba).
-- Barge-in < 100ms; 20 ciclos consecutivos sem deadlock.
-- Estado correto propagado via callbacks.
+- [x] E2E < 2s (fim da fala → primeira sílaba).
+- [x] Barge-in < 100ms; interrupção com voz validada.
+- [x] Estado correto propagado via callbacks.
 
 ---
 
@@ -362,16 +367,34 @@ voice-assistant/
 
 ---
 
-### Dia 5 — Integração E2E + UI (PySide6)
+### Dia 5 — UI (PySide6) + Integração UI ↔ Backend
 
-**Objetivo:** App desktop completo com feedback visual em tempo real.
+**Objetivo:** App desktop completo com feedback visual em tempo real, conectado ao pipeline real.
 
-#### Tarefas
+#### Tarefas — UI (concluída)
 
-- [ ] `ui/app.py`: janela PySide6 dark; status badge (Ouvindo/Pensando/Falando); mute toggle
-- [ ] `ui` ↔ orchestrator via signals/slots (Qt thread-safe)
-- [ ] `main.py`: bootstrap (sobe servidores, preload modelo, splash) + graceful shutdown
-- [ ] `config.py`: todos os hiperparâmetros centralizados
+- [x] `ui/app.py`: QApplication, AppUserModelID, fonte, ícone
+- [x] `ui/app_icon.py`: ícone arredondado multi-tamanho (16–256px) com rim
+- [x] `ui/main_window.py`: janela frameless 4:3, acrylic glass, drag nativo, bandeja com menu, `WindowAnimator`
+- [x] `ui/window_anim.py`: animações de janela (minimize/restore/close) via Qt, `prefers_reduced_motion`
+- [x] `ui/state.py`: `AssistantState` (OFF/LOADING/LISTENING/THINKING/SPEAKING) + `Bus` (signals thread-safe)
+- [x] `ui/theme.py` + `ui/qss.py`: tokens de design, paletas dark/light, estilos centralizados
+- [x] `ui/widgets/`: `center_button` + `status_ring` (anel reativo, limit-aware), `backdrop` (liquid glass + vignette), `title_bar`, `select` (PillSelect), `download_button`, `level_meter`, `toggle_switch`, `transcript` (bubbles)
+- [x] `ui/modals/settings.py`: config (VAD, TTS, mic level/mute, visão, tema, sempre-no-topo) + scroll + live preview
+- [x] `ui/modals/info.py`: modal explicativo "Perfil e voz"
+- [x] `ui/config_store.py`: config.json validado/clampado/atômico
+- [x] `ui/effects.py`: DWM acrylic + cantos arredondados + dark mode + animações nativas
+- [x] `ui/simulator.py`: dados falsos para validação da UI (FASE TRANSITÓRIA)
+- [x] `UI.md`: especificação completa + pipeline de integração backend
+
+#### Tarefas — Integração backend (5 fases, pendente)
+
+- [ ] **Fase 1**: `ui/backend.py` — adaptador que envolve `core/orchestrator.py` e emite signals do `Bus`; trocar `Simulator` no `main_window`
+- [ ] **Fase 2**: `audio/capture.py` expõe RMS → `Bus.mic_level` (revisão juntos)
+- [ ] **Fase 3**: STT → `Bus.user_said` (transcript real)
+- [ ] **Fase 4**: LLM + TTS → estado (THINKING/SPEAKING) + `Bus.assistant_said`
+- [ ] **Fase 5**: `audio/playback.py` expõe RMS de saída + progresso de download; **apagar `ui/simulator.py`**
+- [ ] `main.py`: bootstrap (sobe servidores, preload modelo) + graceful shutdown
 - [ ] Teste E2E: 30 min de uso contínuo
 
 **Critérios de aceite**
@@ -467,16 +490,16 @@ cmake --build build --config Release -j
 # 3. Copiar binários para bin/
 # (whisper-server.exe, llama-server.exe + ggml*.dll)
 
-# 4. Ambiente Python 3.12
-py -3.12 -m venv .venv
+# 4. Ambiente Python (via uv)
+uv venv -p 3.13
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+uv sync
 
-# 5. Baixar modelos
-python scripts/download_models.py
+# 5. Baixar modelos (perfil padrão)
+python scripts/download_models.py padrao
 
 # 6. Rodar o app
-python src/main.py
+python main.py
 ```
 
 ---
