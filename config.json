@@ -1,0 +1,18 @@
+{
+  "theme": "dark",
+  "always_on_top": false,
+  "minimize_to_tray": false,
+  "min_speech_ms": 250,
+  "hangover_ms": 1000,
+  "length_scale": 1.3,
+  "noise_scale": 0.6,
+  "volume": 1.0,
+  "mic_muted": false,
+  "vision_enabled": true,
+  "transcript_visible": false,
+  "transcript_expanded": false,
+  "model_profile": "leve",
+  "voice": "pt_BR-faber-medium",
+  "window_w": 777,
+  "window_h": 582
+}
