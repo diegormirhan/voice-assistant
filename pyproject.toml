@@ -12,6 +12,7 @@ dependencies = [
     "piper-tts>=1.6.0",
     "mss>=10.2.0",
     "pillow>=12.3.0",
+    "pyside6>=6.11.1",
 ]
 
 [dependency-groups]
