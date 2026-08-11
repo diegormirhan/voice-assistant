@@ -206,14 +206,52 @@ uv sync
 python main.py
 ```
 
-On the first run you'll need to download the native binaries and models:
+See [First Run](#first-run) for the initial setup.
 
-1. Click **Download** in the top bar → downloads the Vulkan binaries.
-2. Press the **central button** → downloads the models for the selected profile,
-   starts both servers, and enters listening mode.
+---
 
-> Tip: to avoid re-downloading 9 GB every time, copy your existing `models/`
-> folder beside the app binary (the directory that contains the `.exe`).
+## First Run
+
+On first launch the app is **code-only**: the Vulkan binaries and the models
+are not shipped. They are downloaded once from Hugging Face and cached in a
+writable folder beside the executable.
+
+### 1. Download the binaries
+
+Click **Download** in the top bar. The Vulkan binaries (whisper-server,
+llama-server + DLLs, ~128 MB) are saved to `bin/` next to the app.
+
+### 2. Load the models and start
+
+Press the **central button**. The app:
+
+1. Checks the models for the selected profile and downloads the missing ones
+   (live progress on the download pill; cancel by turning the app off).
+2. Starts both servers — whisper-server on `:9991`, llama-server on `:9992`.
+3. Loads the models and enters **listening** mode — just speak.
+
+> If the binaries are missing, the app stops before downloading any models and
+> shows: "Binários Vulkan ausentes — clique em 'Baixar' na barra superior."
+
+### Model profiles
+
+Choose the profile in the top bar before the first start:
+
+| Profile | LLM | Download size |
+|---|---|---|
+| **Padrão** (default) | Qwen3.5-9B Q4 (vision) | ~6 GB |
+| **Leve** | Qwen3-VL-4B Q4 (vision) | ~2.5 GB |
+
+Only the selected profile is downloaded. Switching profiles later downloads
+just the new LLM.
+
+### Where the files go
+
+- **Installed app** (from the installer): `%LOCALAPPDATA%\VoiceAssistant\`
+- **Development** (`python main.py`): the project's `bin/` and `models/` folders
+
+> Tip: to skip the download on later installs, copy your existing `models/`
+> folder beside the executable.
 
 ---
 
