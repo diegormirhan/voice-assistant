@@ -119,13 +119,3 @@ The app downloads these automatically and caches them beside the executable:
 > only version the code on GitHub.
 
 ---
-
-## Checklist before publishing
-
-- [ ] `pyproject.toml` and `installer/setup.iss` versions match
-- [ ] `installer/build.ps1` completes without errors
-- [ ] `installer/output/VoiceAssistantSetup.exe` exists (~82 MB)
-- [ ] Smoke test passed (app opens, binaries download, full turn works)
-- [ ] Installer tested on a clean machine (no Python installed)
-- [ ] Release notes drafted
-- [ ] Installer attached to the GitHub Release

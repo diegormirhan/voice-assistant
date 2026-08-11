@@ -45,6 +45,8 @@ clean and portable across AMD, NVIDIA, and Intel GPUs.
 Target end-to-end latency: **under 2 seconds** from the end of your speech to
 the first audible syllable of the reply.
 
+![Voice Assistant](https://imgur.com/CU9JYVW)
+
 ---
 
 ## Features
