@@ -14,8 +14,13 @@ from pathlib import Path
 from core.orchestrator import Orchestrator
 from servers import launcher
 from servers.models import MODELS, all_downloads
+
+import config
+
 from . import config_store
 from .state import AssistantState, Bus
+
+_SETTING_KEYS = ("min_speech_ms", "hangover_ms", "length_scale", "noise_scale", "vision_enabled")
 
 class _CancelDownload(Exception):
     """Raised by the progress callback when the user turns the app off."""
@@ -30,6 +35,11 @@ class Backend:
         self._stop_event = threading.Event()
         self._download: threading.Thread | None = None
         self._muted = False
+        self._settings = self._extract(config_store.load())
+
+    @staticmethod
+    def _extract(cfg: dict) -> dict:
+        return {k: cfg[k] for k in _SETTING_KEYS}
 
     # -- api (Simulator-compatible)
 
@@ -57,6 +67,17 @@ class Backend:
 
     def set_mic_muted(self, muted: bool) -> None:
         self._muted = bool(muted)
+
+    def apply_settings(self, cfg: dict) -> None:
+        """Stores settings and forwards them to the live orchestrator."""
+        self._settings = self._extract(cfg)
+        if self._loop is not None and self._orchestrator is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._orchestrator.apply_settings(self._settings), self._loop
+                ).result(timeout=2)
+            except Exception:
+                pass
 
     def start_download(self) -> None:
         if self._download is not None and self._download.is_alive():
@@ -95,6 +116,8 @@ class Backend:
     async def _main(self) -> None:
         whisper = llama = None
         try:
+            if not self._binaries_ready():
+                raise RuntimeError("Binários Vulkan ausentes — clique em 'Baixar' na barra superior.")
             await asyncio.to_thread(self._ensure_models)
             if self._stop_event.is_set():
                 return
@@ -123,6 +146,12 @@ class Backend:
     def _profile(self) -> str:
         return config_store.load().get("model_profile", "padrao")
 
+    def _binaries_ready(self) -> bool:
+        return (
+            (config.WHISPER_BIN / "whisper-server.exe").exists()
+            and (config.LLAMA_BIN / "llama-server.exe").exists()
+        )
+
     def _ensure_models(self) -> None:
         """Downloads missing models for the selected profile (cancellable)."""
         profile = self._profile()
@@ -143,8 +172,12 @@ class Backend:
     def _build_orchestrator(self) -> Orchestrator:
         return Orchestrator(
             self._model_path,
+            settings=self._settings,
             on_mic_level=lambda v: self._bus.mic_level.emit(0.0 if self._muted else v),
             on_user_text=self._bus.user_said.emit,
+            on_state=lambda s: self._bus.state_changed.emit(AssistantState(s)),
+            on_assistant_text=self._bus.assistant_said.emit,
+            on_output_level=self._bus.output_level.emit
             )
 
     async def _shutdown(self) -> None:

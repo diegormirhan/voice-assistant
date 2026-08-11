@@ -5,7 +5,7 @@ import sounddevice as sd
 class AudioPlayback:
     """Plays TTS audio on a dedicated thread with barge-in support."""
 
-    def __init__(self, sample_rate: int):
+    def __init__(self, sample_rate: int, on_level = None):
         self._sample_rate = sample_rate                 # TTS sample rate (22050)
         self._queue = queue.Queue()                     # speak() puts, _run() takes
         self._interrupt = threading.Event()             # barge-in flag
@@ -14,7 +14,8 @@ class AudioPlayback:
         self._idle.set()
         self._lock = threading.Lock()                   # guards _queue/_idle
         self._stream: sd.OutputStream | None = None     # one stream, opened in start()
-        self._thread: threading.Thread | None = None    # playback thread
+        self._thread: threading.Thread | None = None
+        self._on_level = on_level   # playback thread
 
     def start(self):
         # One stream for the whole session (reopening per sentence adds gaps).
@@ -55,6 +56,8 @@ class AudioPlayback:
         with self._lock:
             if self._queue.empty():
                 self._idle.set()
+                if self._on_level:
+                    self._on_level(0.0)
 
     def _write_chunk(self, chunk_bytes: bytes):
         audio = np.frombuffer(chunk_bytes, dtype=np.int16)
@@ -63,7 +66,11 @@ class AudioPlayback:
         for start in range(0, len(audio), 512):
             if self._interrupt.is_set() or self._shutdown.is_set():
                 break
-            self._stream.write(audio[start:start + 512])
+            slice_ = audio[start:start + 512]
+            self._stream.write(slice_)
+            if self._on_level:
+                rms = float(np.sqrt(np.mean(slice_.astype(np.float32) ** 2)) / 32768.0)
+                self._on_level(min(1.0, rms * 3.0))
 
     def interrupt(self):
         """Barge-in: set flag, discard queued audio, abort the stream."""
@@ -72,6 +79,8 @@ class AudioPlayback:
             while not self._queue.empty():
                 self._queue.get_nowait()
             self._idle.set()
+            if self._on_level:
+                self._on_level(0.0)
         if self._stream:
             self._stream.abort()  # stops immediately, drops buffered audio
 
@@ -99,3 +108,5 @@ class AudioPlayback:
             self._stream.stop()
             self._stream.close()
             self._stream = None
+        if self._on_level:
+            self._on_level(0.0)

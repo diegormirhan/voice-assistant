@@ -1,6 +1,6 @@
 {
   "theme": "dark",
-  "always_on_top": false,
+  "always_on_top": true,
   "minimize_to_tray": false,
   "min_speech_ms": 250,
   "hangover_ms": 1000,
@@ -10,7 +10,7 @@
   "mic_muted": false,
   "vision_enabled": true,
   "transcript_visible": true,
-  "transcript_expanded": true,
+  "transcript_expanded": false,
   "model_profile": "padrao",
   "voice": "pt_BR-faber-medium",
   "window_w": 770,

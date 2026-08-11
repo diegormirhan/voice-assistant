@@ -4,6 +4,7 @@ Repo: https://huggingface.co/diegomirhan/voice-assistant-binaries
 Repo must be public or have a token set in HF_TOKEN.
 """
 
+import sys
 from pathlib import Path
 
 try: # imported as a package (python main.py)
@@ -11,8 +12,16 @@ try: # imported as a package (python main.py)
 except ImportError: # run directly (python scripts/download_binaries.py)
     from downloads import batch
 
-ROOT = Path(__file__).resolve().parent.parent
-BIN = ROOT / "bin"
+
+def _bin_dir() -> Path:
+    # Persistent, writable: beside the app binary (frozen) or the project
+    # root (development). Downloads write here so they survive restarts.
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "bin"
+    return Path(__file__).resolve().parent.parent / "bin"
+
+
+BIN = _bin_dir()
 
 # Files relative to bin/, same layout as bin/.
 FILES = [

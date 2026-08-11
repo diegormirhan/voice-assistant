@@ -14,6 +14,10 @@ class PiperTTS:
         # noise_scale adds voice variation (low = stable, high = expressive).
         self._syn_config = SynthesisConfig(length_scale=length_scale, noise_scale=noise_scale)
 
+    def set_style(self, length_scale: float, noise_scale: float) -> None:
+        """Updates the synthesis style live (no voice reload)."""
+        self._syn_config = SynthesisConfig(length_scale=length_scale, noise_scale=noise_scale)
+
     def synthesize(self, text: str) -> Iterator[tuple[bytes, int]]:
         for chunk in self._voice.synthesize(text, syn_config=self._syn_config):
             yield chunk.audio_int16_bytes, chunk.sample_rate

@@ -129,7 +129,7 @@ class MainWindow(QMainWindow):
         self.hint.setProperty("role", "hint")
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.hint)
-        layout.addStretch(1)
+        layout.addSpacing(2)
 
         self.transcript = TranscriptPanel(
             self._palette, expanded=self._config["transcript_expanded"]
@@ -278,6 +278,7 @@ class MainWindow(QMainWindow):
             self.transcript.set_expanded(False, animate=False)
         self._apply_always_on_top(self._config["always_on_top"])
         self.backend.set_mic_muted(self._config["mic_muted"])
+        self.backend.apply_settings(self._config)
 
     def _update_config(self, **changes) -> None:
         self._config.update(changes)

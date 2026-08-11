@@ -1,6 +1,8 @@
 import numpy as np
 import onnxruntime as ort
 
+from servers.models import MODELS
+
 class SpeechSegmenter:
     """Silero VAD + speech buffering.
 
@@ -15,11 +17,13 @@ class SpeechSegmenter:
     MIN_SPEECH_MS = 300     # ignore segments shorter than this
     HANGOVER_MS = 1000       # silence after speech before closing segment
 
-    def __init__(self, on_segment, on_speech_start=None):
+    def __init__(self, on_segment, on_speech_start=None, min_speech_ms = MIN_SPEECH_MS, hangover_ms = HANGOVER_MS):
         """on_segment: callback receiving np.ndarray int16 (full speech).
         on_speech_start: callback fired the moment speech is detected (barge-in)"""
         self._on_segment = on_segment
         self._on_speech_start = on_speech_start
+        self._min_speech_ms = min_speech_ms
+        self._hangover_ms = hangover_ms
 
         # buffer state
         self._buffer = []
@@ -28,12 +32,17 @@ class SpeechSegmenter:
         self._speech_ms = 0
 
         # silero VAD stateful session
-        self._session = ort.InferenceSession("models/vad/silero_vad.onnx")
+        self._session = ort.InferenceSession(str(MODELS / "vad/silero_vad.onnx"))
         self._input_name = self._session.get_inputs()[0].name
         self._state_name = self._session.get_inputs()[1].name
         self._sr_name = self._session.get_inputs()[2].name
         self._context = np.zeros((1, self.CONTEXT_SIZE), dtype=np.float32)
         self._state = np.zeros((2, 1, 128), dtype=np.float32)
+
+    def apply(self, min_speech_ms, hangover_ms):
+        """Updates the segmentation thresholds live (no model reload)."""
+        self._min_speech_ms = min_speech_ms
+        self._hangover_ms = hangover_ms
 
     def add(self, block: np.ndarray):
         """Called by the capture for each 32ms block."""
@@ -50,7 +59,7 @@ class SpeechSegmenter:
         elif self._speaking:
             self._silence_ms += block_ms
             self._buffer.append(block)
-            if self._silence_ms >= self.HANGOVER_MS:
+            if self._silence_ms >= self._hangover_ms:
                 self._close()
 
     def _vad_prob(self, block: np.ndarray) -> float:
@@ -67,7 +76,7 @@ class SpeechSegmenter:
         return float(np.asarray(out).squeeze())
 
     def _close(self):
-        if self._speech_ms >= self.MIN_SPEECH_MS and self._buffer:
+        if self._speech_ms >= self._min_speech_ms and self._buffer:
             self._on_segment(np.concatenate(self._buffer))
         self._state = np.zeros((2, 1, 128), dtype=np.float32)
         self._context = np.zeros((1, self.CONTEXT_SIZE), dtype=np.float32)

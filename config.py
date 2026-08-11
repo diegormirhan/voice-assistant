@@ -1,10 +1,20 @@
 """Centralized paths, ports and model profile selection."""
 
+import sys
 from pathlib import Path
 
 from servers.models import MODELS, absolute, profile
 
-ROOT = Path(__file__).resolve().parent
+
+def _app_dir() -> Path:
+    # Persistent, writable location: beside the app binary (frozen) or the
+    # project root (development). Binaries downloaded on first run live here.
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+ROOT = _app_dir()
 BIN = ROOT / "bin"
 
 # Servers (llama.cpp / whisper.cpp).

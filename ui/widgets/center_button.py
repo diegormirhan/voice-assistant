@@ -47,7 +47,9 @@ class CenterButton(QPushButton):
         span = int((T.ring_radius + T.ring_margin) * 2)
         self.setFixedSize(span, span)
         self.setObjectName("powerBtn")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setToolTip("Ligar o assistente")
         self.clicked.connect(self._on_clicked)
@@ -122,9 +124,23 @@ class CenterButton(QPushButton):
         self.toggled_on.emit(self._state is AssistantState.OFF)
 
     def _update_hover(self, inside: bool) -> None:
+        self.setCursor(
+            Qt.CursorShape.PointingHandCursor if inside else Qt.CursorShape.ArrowCursor
+        )
         target = 1.0 if inside else 0.0
         if self._hover != target:
             self._animate_hover(target)
+
+    def event(self, ev):
+        # Track hover precisely, even without button presses.
+        if ev.type() in (
+            ev.Type.HoverMove,
+            ev.Type.HoverEnter,
+        ):
+            self._update_hover(self._inside_orb(ev.position()))
+        elif ev.type() is ev.Type.HoverLeave:
+            self._update_hover(False)
+        return super().event(ev)
 
     def enterEvent(self, event) -> None:
         super().enterEvent(event)

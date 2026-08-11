@@ -28,7 +28,7 @@ from .. import icons
 from ..theme import T, Palette
 
 _MAX_MESSAGES = 200
-_BODY_HEIGHT = 270
+_BODY_HEIGHT = 320
 
 
 class _Bubble(QFrame):

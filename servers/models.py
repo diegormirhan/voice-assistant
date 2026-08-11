@@ -4,10 +4,20 @@ The user picks a profile manually (leve or padrao). Only the LLM differs
 between profiles; whisper and TTS are shared (COMMON). No VRAM detection.
 """
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+
+def _base_dir() -> Path:
+    # Persistent, writable data location: beside the app binary (frozen) or
+    # the project root (development). Downloaded models live here.
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+ROOT = _base_dir()
 MODELS = ROOT / "models"
 
 

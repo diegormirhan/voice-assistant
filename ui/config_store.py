@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = ROOT / "config.json"
+
+def _config_dir() -> Path:
+    # Config must persist across runs: beside the app binary (frozen) or
+    # the project root (development).
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+CONFIG_PATH = _config_dir() / "config.json"
 
 DEFAULTS: dict[str, Any] = {
     "theme": "dark",
