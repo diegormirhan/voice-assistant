@@ -1,10 +1,4 @@
-"""Fake backend so the UI can be designed, reviewed and demoed standalone.
-
-UI.md stage 1 is "apenas a UI, com dados simulados". Everything here talks to
-the app exclusively through `Bus`, which is the same seam the real
-orchestrator will use — deleting this file is the only change required when
-the backend lands.
-"""
+"""Fake backend so the UI can be designed, reviewed and demoed standalone."""
 
 from __future__ import annotations
 

@@ -1,19 +1,4 @@
-"""Windows composition effects (acrylic glass, rounded corners, minimize).
-
-Every call is a safe no-op off Windows or on older builds, so the same code
-runs on any platform for design iteration.
-
-Bugs fixed vs. the previous version:
-  * `WS_CAPTION` was OR-ed into a frameless translucent window, which makes
-    DWM paint a native frame/shadow strip over the glass card. Only
-    MINIMIZEBOX/MAXIMIZEBOX are needed for the native minimise animation.
-  * the rounded-corner preference was applied but the window was ALSO
-    clipped with `setMask()` from a polygonised path, producing jagged
-    aliased corners and killing per-pixel alpha. Masking is gone: the corner
-    radius now comes from DWM (window) + QSS (card), matched at 8px.
-  * dark/light mode was never reported to DWM, so the native backdrop tint
-    stayed dark in light theme.
-"""
+"""Windows composition effects (acrylic glass, rounded corners, minimize)."""
 
 from __future__ import annotations
 

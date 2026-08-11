@@ -1,10 +1,4 @@
-"""Pill button that renders its own inline download progress.
-
-UI.md asks for "botão com ícone de download + barra de progresso inline".
-The old UI had the button but no progress affordance at all, and no way to
-signal completion. This paints the progress as a gradient fill inside the
-pill, keeps the label in sync, and locks itself while running.
-"""
+"""Pill button that renders its own inline download progress."""
 
 from __future__ import annotations
 
@@ -48,6 +42,8 @@ class DownloadButton(QPushButton):
         self._sync_label()
 
     def set_progress(self, percent: int) -> None:
+        if self._progress is None:
+            self.start() # first progress -> enter running state (locks the pill)
         self._progress = max(0, min(100, int(percent)))
         self._sync_label()
 

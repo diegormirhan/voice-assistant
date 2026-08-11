@@ -9,10 +9,10 @@
   "volume": 1.0,
   "mic_muted": false,
   "vision_enabled": true,
-  "transcript_visible": false,
-  "transcript_expanded": false,
-  "model_profile": "leve",
+  "transcript_visible": true,
+  "transcript_expanded": true,
+  "model_profile": "padrao",
   "voice": "pt_BR-faber-medium",
-  "window_w": 777,
+  "window_w": 770,
   "window_h": 582
 }

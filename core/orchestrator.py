@@ -14,7 +14,7 @@ from vision.screenshot import Screenshot
 
 
 class Orchestrator:
-    def __init__(self, model_path: Path):
+    def __init__(self, model_path: Path, on_mic_level = None, on_user_text = None):
         self._tts = PiperTTS(model_path)
         self._playback = AudioPlayback(self._tts.sample_rate)
         self._stt = WhisperSTT()
@@ -30,7 +30,12 @@ class Orchestrator:
             on_segment=self._on_segment,
             on_speech_start=self._on_speech_start,
         )
-        self._capture = AudioCapture(on_audio=self._segmenter.add)
+        self._on_mic_level = on_mic_level
+        self._on_user_text = on_user_text
+        self._capture = AudioCapture(
+            on_audio = self._segmenter.add,
+            on_level = self._on_mic_level,
+        )
 
     # -- public ---------------------------------------------------------
 
@@ -45,6 +50,12 @@ class Orchestrator:
         self._playback.stop()
         if self._llm_task and not self._llm_task.done():
             self._llm_task.cancel()
+            self._llm_task = None
+
+    async def aclose(self):
+        """Realeases the STT/LLM HTTP clients. Await inside the event loop."""
+        await self._stt.close()
+        await self._llm.close()
 
     async def run(self):
         """Keeps the loop alive until KeyboardInterrupt."""
@@ -55,6 +66,7 @@ class Orchestrator:
             pass
         finally:
             self.stop()
+            await self.aclose()
 
     # -- callbacks from the audio thread (sync) --------------------------
 
@@ -83,7 +95,8 @@ class Orchestrator:
         text = await self._stt.transcribe(segment.tobytes())
         if not text:
             return
-        print(f"[stt] {text}")
+        if self._on_user_text:
+            self._on_user_text(text)
 
         self._playback.clear_interrupt()
         image = self._shot.capture()

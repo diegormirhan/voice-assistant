@@ -1,8 +1,5 @@
 """Status ring renderer — the visual language of the assistant's state.
 
-Split out of `CenterButton` (UI.md asks for `status_ring.py`) so the glow
-logic is testable and the button widget stays about interaction.
-
 Layers, outside in:
   1. wide soft aura        — amplitude driven
   2. amplitude corona      — instantaneous audio energy
@@ -62,21 +59,27 @@ class StatusRing:
         breath = 0.5 + 0.5 * math.sin(phase * 1.6)
         cx, cy = center.x(), center.y()
 
+        # Boost visual energy when the user or the assistant is actively talking.
+        is_voice_active = state in (AssistantState.LISTENING, AssistantState.SPEAKING)
+        voice_boost = 1.55 if is_voice_active else 1.0
+
         if state is AssistantState.OFF:
             amp = 0.0
         elif state is AssistantState.THINKING:
             amp = 0.25 + 0.35 * breath
         elif state is AssistantState.LOADING:
             amp = 0.18 + 0.2 * breath
+        else:
+            amp = 0.35 + 0.65 * amp
 
-        # 1 — wide aura
+        # 1 — wide aura (larger and more saturated when actively speaking/listening)
         head = max_glow - radius
-        aura_r = radius + head * (0.62 + 0.30 * amp + 0.06 * hover)
+        aura_r = radius + head * (0.62 + 0.38 * amp * voice_boost + 0.06 * hover)
         aura_r = min(aura_r, max_glow)
-        aura_alpha = 6 if state is AssistantState.OFF else int(18 + 34 * amp)
+        aura_alpha = 6 if state is AssistantState.OFF else int(22 + 55 * amp * voice_boost)
         aura = QRadialGradient(cx, cy, aura_r)
-        aura.setColorAt(0.5, _rgba(color, aura_alpha))
-        aura.setColorAt(0.8, _rgba(color, aura_alpha // 2))
+        aura.setColorAt(0.4, _rgba(color, aura_alpha))
+        aura.setColorAt(0.75, _rgba(color, aura_alpha // 2))
         aura.setColorAt(1.0, _rgba(color, 0))
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(aura)
@@ -95,13 +98,13 @@ class StatusRing:
             p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
             for lobe_color, speed, offset in lobes:
                 angle = phase * speed * 1.15 + offset
-                lobe_r = radius * (0.50 + 0.26 * amp)
+                lobe_r = radius * (0.52 + 0.32 * amp * voice_boost)
                 # Keep orbit + blob radius inside the aura envelope.
-                orbit = radius * (0.80 + 0.22 * amp) + 10 * hover
+                orbit = radius * (0.82 + 0.30 * amp * voice_boost) + 12 * hover
                 orbit = min(orbit, max(0.0, max_glow - lobe_r * 0.92))
                 lx = cx + math.cos(angle) * orbit
                 ly = cy + math.sin(angle * 1.12) * orbit
-                lobe_alpha = int(85 + 165 * amp)
+                lobe_alpha = int(95 + 195 * amp * voice_boost)
                 grad = QRadialGradient(lx, ly, lobe_r)
                 grad.setColorAt(0.0, _rgba(lobe_color, lobe_alpha))
                 grad.setColorAt(0.45, _rgba(lobe_color, lobe_alpha // 3))
@@ -111,11 +114,11 @@ class StatusRing:
             p.restore()
 
         # 2 — corona
-        corona_r = min(radius + 11 + 12 * amp, max_glow * 0.92)
-        corona_alpha = 8 if state is AssistantState.OFF else int(26 + 62 * amp)
+        corona_r = min(radius + 13 + 18 * amp * voice_boost, max_glow * 0.94)
+        corona_alpha = 8 if state is AssistantState.OFF else int(32 + 85 * amp * voice_boost)
         corona = QRadialGradient(cx, cy, corona_r)
-        corona.setColorAt(0.68, _rgba(color, 0))
-        corona.setColorAt(0.9, _rgba(color, corona_alpha))
+        corona.setColorAt(0.64, _rgba(color, 0))
+        corona.setColorAt(0.88, _rgba(color, corona_alpha))
         corona.setColorAt(1.0, _rgba(color, 0))
         p.setBrush(corona)
         p.setPen(Qt.PenStyle.NoPen)

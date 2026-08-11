@@ -1,19 +1,4 @@
-"""Window chrome animations: minimise, maximise/restore and close.
-
-Why this exists: the window is frameless *and* `WA_TranslucentBackground`, so
-Windows treats it as a layered window and skips the native genie/zoom
-animations — pressing the buttons made the window teleport. The transitions are
-therefore driven in Qt: geometry + windowOpacity tweens that mimic the shell.
-
-Notes
-  * maximise is emulated (geometry -> screen work area) instead of
-    `showMaximized()`, because a real state change repaints instantly and would
-    cancel the tween. The window keeps its own `is_maximized` flag.
-  * every animation is re-entrancy guarded: clicking twice mid-flight is a
-    no-op instead of leaving the window at an interpolated size.
-  * `prefers_reduced_motion` short-circuits to the plain state change so the
-    app still behaves for users with animations disabled system-wide.
-"""
+"""Window chrome animations: minimise, maximise/restore and close."""
 
 from __future__ import annotations
 

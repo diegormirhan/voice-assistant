@@ -1,11 +1,4 @@
-"""Pill select with a leading glyph and a hand-painted chevron.
-
-Why not plain QSS: `QComboBox::down-arrow` can only take an `image:` URL, so
-the previous version faked the arrow with CSS borders — a hard-edged triangle
-that ignored the device pixel ratio and looked chunky at 125%+ scaling. Here
-the chevron is a DPR-aware pixmap drawn in `paintEvent`, so it matches the
-rest of the icon set exactly and recolours with the theme.
-"""
+"""Pill select with a leading glyph and a hand-painted chevron."""
 
 from __future__ import annotations
 

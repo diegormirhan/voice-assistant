@@ -23,7 +23,7 @@ WHISPER_MODEL = MODELS / "whisper/ggml-small.bin"
 MODEL_PROFILE = "padrao"
 
 
-def llm_paths() -> tuple[Path, Path]:
+def llm_paths(name: str | None = None) -> tuple[Path, Path]:
     """Returns (llm, mmproj) absolute paths for the active profile."""
-    p = profile(MODEL_PROFILE)
+    p = profile(name or MODEL_PROFILE)
     return absolute(p.llm), absolute(p.mmproj)

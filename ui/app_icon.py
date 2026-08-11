@@ -1,12 +1,4 @@
-"""Rounded application icon used by the taskbar, Alt-Tab and the system tray.
-
-Windows shows `setWindowIcon` / `QSystemTrayIcon` pixmaps exactly as given, so
-the raw square `icon.jpg` / `icon.ico` looked like a hard-edged tile next to
-the rounded system icons. Here the source art is re-rendered into a set of
-standard icon sizes with a circular mask (plus a hairline rim so the shape
-reads on both light and dark taskbars), and every size is added to a single
-QIcon so Windows can pick the right one without resampling artefacts.
-"""
+"""Rounded application icon used by the taskbar, Alt-Tab and the system tray."""
 
 from __future__ import annotations
 

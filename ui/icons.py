@@ -1,9 +1,4 @@
-"""Vector icons painted with QPainter — no icon font, no image assets.
-
-Bug fixed: the previous version painted into a 1x QPixmap, so every icon was
-visibly blurry on 125/150/200% Windows scaling. Pixmaps are now rendered at
-the screen's device pixel ratio and tagged, so Qt downsamples crisply.
-"""
+"""Vector icons painted with QPainter — no icon font, no image assets."""
 
 from __future__ import annotations
 

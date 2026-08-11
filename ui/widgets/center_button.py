@@ -1,20 +1,4 @@
-"""Central power button: circular, reactive glow ring, hover micro-interaction.
-
-Bugs fixed vs. the previous version:
-  * clicking it did nothing — there was no state handling at all, so the
-    "ligar/desligar" control from UI.md was inert. It now toggles and emits
-    `toggled_on`.
-  * the 60 fps repaint timer ran forever, even with the assistant OFF and the
-    window minimised (constant CPU/GPU wakeups). It now stops when the widget
-    is hidden and idles at a low rate when OFF.
-  * `set_amplitude()` never scheduled a repaint, so the ring only moved
-    because of the unrelated animation timer.
-  * `icon.jpg` was drawn as a rounded *square* on top of a circle, so its
-    corners spilled outside the orb. The logo is now clipped to the circle
-    and scaled with KeepAspectRatioByExpanding (no stretching).
-  * the pixmap was cached once with no DPR, so it was blurry on scaled
-    displays and never invalidated when the widget resized.
-"""
+"""Central power button: circular, reactive glow ring, hover micro-interaction."""
 
 from __future__ import annotations
 
@@ -31,7 +15,7 @@ from PySide6.QtCore import (
     Property,
     Signal,
 )
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QPushButton
 
 from ..assets import ICON_JPG, asset
@@ -77,6 +61,11 @@ class CenterButton(QPushButton):
         self._timer.timeout.connect(self._tick)
 
     # -- animated hover property ------------------------------------------
+
+    def _inside_orb(self, pos: QPointF) -> bool:
+        """Return True if the point is inside the circular orb (not the glow margin)."""
+        center = QPointF(self.width() / 2.0, self.height() / 2.0)
+        return (pos.x() - center.x()) ** 2 + (pos.y() - center.y()) ** 2 <= self._radius ** 2
 
     def _get_hover(self) -> float:
         return self._hover
@@ -132,13 +121,34 @@ class CenterButton(QPushButton):
     def _on_clicked(self) -> None:
         self.toggled_on.emit(self._state is AssistantState.OFF)
 
+    def _update_hover(self, inside: bool) -> None:
+        target = 1.0 if inside else 0.0
+        if self._hover != target:
+            self._animate_hover(target)
+
     def enterEvent(self, event) -> None:
         super().enterEvent(event)
-        self._animate_hover(1.0)
+        self._update_hover(self._inside_orb(event.position()))
 
     def leaveEvent(self, event) -> None:
         super().leaveEvent(event)
-        self._animate_hover(0.0)
+        self._update_hover(False)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        super().mouseMoveEvent(event)
+        self._update_hover(self._inside_orb(event.position()))
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if self._inside_orb(event.position()):
+            super().mousePressEvent(event)
+        else:
+            event.ignore()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if self._inside_orb(event.position()):
+            super().mouseReleaseEvent(event)
+        else:
+            event.ignore()
 
     def _animate_hover(self, target: float) -> None:
         self._hover_anim.stop()

@@ -1,10 +1,4 @@
-"""Assistant state machine + the single signal bus between UI and backend.
-
-The UI never talks to the orchestrator directly: it listens to `Bus`.
-Whatever produces the events (the simulator today, the real orchestrator
-later) only has to emit these signals from any thread — Qt queues them onto
-the GUI thread, so this is the thread-safe seam described in UI.md.
-"""
+"""Assistant state machine + the single signal bus between UI and backend."""
 
 from __future__ import annotations
 

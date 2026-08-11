@@ -1,17 +1,4 @@
-"""Application bootstrap.
-
-`app.py` used to hold the whole window (500 lines) plus the entry point; it is
-now only the QApplication setup so the window can be imported and tested
-without side effects.
-
-Bugs fixed vs. the previous version:
-  * `sys.exit(app.exec())` ran even when window construction raised, hiding
-    the traceback behind an empty exit; failures are now reported.
-  * the taskbar grouped the app under the generic "python.exe" icon on
-    Windows because no AppUserModelID was set.
-  * `QFont("Segoe UI", 10)` was applied without a fallback, so on a machine
-    without Segoe UI every label fell back to an unstyled default.
-"""
+"""Application bootstrap."""
 
 from __future__ import annotations
 

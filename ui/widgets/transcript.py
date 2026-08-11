@@ -1,18 +1,4 @@
-"""Collapsible session transcript with real message bubbles.
-
-Bugs fixed vs. the previous version:
-  * messages were injected into a QTextBrowser as raw HTML, so any `<`, `&`
-    or `>` in a transcription corrupted the layout (and was an injection
-    vector). Bubbles are now widgets and text is set as plain text.
-  * `QTextBrowser.append()` ignored the inline `display:inline-block` /
-    `max-width` styles Qt's rich text subset does not support, so the
-    "bubbles" rendered as full-width blocks.
-  * the panel's palette was captured at construction time and never updated,
-    so after a theme switch the transcript kept the old colours.
-  * the panel never auto-scrolled, so new messages appeared off-screen.
-  * expanding/collapsing snapped with no animation and the arrow icon was
-    recoloured from a stale palette.
-"""
+"""Collapsible session transcript with real message bubbles."""
 
 from __future__ import annotations
 
@@ -42,7 +28,7 @@ from .. import icons
 from ..theme import T, Palette
 
 _MAX_MESSAGES = 200
-_BODY_HEIGHT = 190
+_BODY_HEIGHT = 270
 
 
 class _Bubble(QFrame):
@@ -97,6 +83,30 @@ class _Bubble(QFrame):
 
 
 
+class _Body(QScrollArea):
+    """Scroll area whose preferred height is the current body cap.
+
+    QScrollArea's own hint comes from the (resizable) content widget, so the
+    panel used to settle at whatever the bubbles needed instead of the intended
+    body height. Reporting the cap as the hint lets the layout grow the panel to
+    `_BODY_HEIGHT` when there is room and shrink it to 0 when there is not.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cap = 0
+
+    def set_cap(self, cap: int) -> None:
+        self._cap = max(0, int(cap))
+        self.updateGeometry()
+
+    def sizeHint(self) -> QSize:
+        return QSize(super().sizeHint().width(), self._cap)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(super().minimumSizeHint().width(), 0)
+
+
 class TranscriptPanel(QFrame):
     expanded_changed = Signal(bool)
 
@@ -105,6 +115,13 @@ class TranscriptPanel(QFrame):
         self._palette = palette
         self._expanded = bool(expanded)
         self._count = 0
+
+        # Let the surrounding layout compress the panel instead of pushing it
+        # out of the card when the window is short.
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        self.setMinimumHeight(0)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -140,19 +157,23 @@ class TranscriptPanel(QFrame):
         root.addLayout(header)
 
         # Body ------------------------------------------------------------
-        self._scroll = QScrollArea()
+        self._scroll = _Body()
         self._scroll.setObjectName("transcriptScroll")
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        # Bug fixed: only `maximumHeight` was set, so the surrounding stretches
-        # took the space and the expanded panel collapsed to ~46px, clipping
-        # the newest bubble. The height is now pinned in both directions.
+        # Bug fixed: the body height used to be pinned in both directions
+        # (min == max). In a short window the vertical layout could not shrink
+        # the panel, so the bubble list overflowed past the rounded card and
+        # was painted outside the window. The height is now a *cap*: the panel
+        # takes up to `_BODY_HEIGHT` when there is room and compresses (down to
+        # zero) when there is not, so nothing ever escapes the card.
         self._scroll.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
+        self._scroll.viewport().setMinimumHeight(0)
         self._set_body_height(_BODY_HEIGHT if self._expanded else 0)
 
         holder = QWidget()
@@ -161,7 +182,7 @@ class TranscriptPanel(QFrame):
         self._list.setSpacing(8)
         self._list.addStretch(1)
         self._scroll.setWidget(holder)
-        root.addWidget(self._scroll)
+        root.addWidget(self._scroll, 1)
 
         self._empty = QLabel("A conversa desta sessão aparece aqui.")
         self._empty.setProperty("role", "hint")
@@ -180,8 +201,10 @@ class TranscriptPanel(QFrame):
     def _set_body_height(self, value) -> None:
         height = max(0, int(value))
         self._body_height = height
-        self._scroll.setMinimumHeight(height)
         self._scroll.setMaximumHeight(height)
+        self._scroll.setMinimumHeight(0)
+        self._scroll.set_cap(height)
+        self._scroll.setVisible(height > 0)
 
     def _get_body_height(self) -> int:
         return getattr(self, "_body_height", 0)

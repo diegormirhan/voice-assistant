@@ -1,34 +1,8 @@
 """Main window: frameless, translucent, acrylic 4:3 glass panel.
-
-Bugs fixed vs. the previous version:
-  * `setMask(QRegion(path.toFillPolygon().toPolygon()))` clipped the window to
-    a polygonised rounded rect on every resize — jagged, aliased corners plus
-    the loss of per-pixel alpha. Removed; corners come from DWM + QSS at the
-    same 8px radius.
-  * `WS_CAPTION` was OR-ed into the window style, adding a native frame strip
-    over the glass. Only the minimise/maximise bits are set now.
-  * the tray icon restored the window on *any* activation reason, so a mere
-    right-click (context menu) popped the window back; and the tray had no
-    menu at all, which on Windows means a minimised-to-tray app with no way
-    back if the click was swallowed.
-  * `closeEvent` and the X button both saved the config and quit, so config
-    was written twice and `QApplication.quit()` ran during teardown.
-  * "minimizar para a bandeja" from UI.md was never implemented — minimise
-    only went to the taskbar.
-  * the amplitude simulation timer pulsed the ring even with the assistant
-    OFF, and kept running while minimised.
-  * `always_on_top` was toggled with `setWindowFlag` without re-showing on
-    some paths, silently hiding the window.
-  * the theme switch never reached the transcript panel or the settings
-    dialog, leaving mixed-palette UI.
-  * the window could be dragged from anywhere in the top 60px including over
-    the combo boxes; dragging is now restricted to the title bar's empty area
-    and uses the native system move (so Aero Snap and multi-monitor DPI work).
-  * window size/position were never persisted.
 """
 
 from __future__ import annotations
-
+import config
 
 
 
@@ -56,7 +30,7 @@ from .app_icon import app_icon
 from .modals.info import VoiceProfileInfoModal
 from .modals.settings import SettingsModal
 from .qss import build_qss
-from .simulator import Simulator
+from .backend import Backend
 from .state import AssistantState, Bus
 from .theme import T, palette_for
 from .widgets.backdrop import LiquidBackdrop
@@ -77,7 +51,7 @@ class MainWindow(QMainWindow):
         self._quitting = False
 
         self.bus = bus or Bus()
-        self.simulator = Simulator(self.bus, self)
+        self.backend = Backend(self.bus, config.TTS_MODEL, self)
 
         self.setWindowTitle("Assistente de Voz")
         self.setWindowFlags(
@@ -89,7 +63,7 @@ class MainWindow(QMainWindow):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         # The title bar packs status + two pills + ⓘ + window buttons; below this
         # width the row squeezes past its minimum and the children overlap.
-        self.setMinimumSize(QSize(820, 520))
+        self.setMinimumSize(QSize(820, 620))
         self.resize(self._config["window_w"], self._config["window_h"])
         window_icon = app_icon()
         if not window_icon.isNull():
@@ -247,9 +221,9 @@ class MainWindow(QMainWindow):
 
     def _on_power_toggled(self, turn_on: bool) -> None:
         if turn_on:
-            self.simulator.start()
+            self.backend.start()
         else:
-            self.simulator.stop()
+            self.backend.stop()
 
     def _on_mic_level(self, level: float) -> None:
         if self._state in (AssistantState.LISTENING, AssistantState.OFF):
@@ -272,7 +246,7 @@ class MainWindow(QMainWindow):
         if self.title_bar.download_btn.is_running():
             return
         self.title_bar.download_btn.start()
-        self.simulator.start_download()
+        self.backend.start_download()
 
     def _open_profile_info(self) -> None:
         VoiceProfileInfoModal(self._palette, self).exec()
@@ -303,7 +277,7 @@ class MainWindow(QMainWindow):
         if not self._config["transcript_visible"]:
             self.transcript.set_expanded(False, animate=False)
         self._apply_always_on_top(self._config["always_on_top"])
-        self.simulator.set_mic_muted(self._config["mic_muted"])
+        self.backend.set_mic_muted(self._config["mic_muted"])
 
     def _update_config(self, **changes) -> None:
         self._config.update(changes)
@@ -336,7 +310,7 @@ class MainWindow(QMainWindow):
 
     def quit_app(self) -> None:
         self._quitting = True
-        self.simulator.stop()
+        self.backend.stop()
         self._persist_geometry()
         config_store.save(self._config)
         if self._tray is not None:
@@ -352,7 +326,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         if not self._quitting:
             self._quitting = True
-            self.simulator.stop()
+            self.backend.stop()
             self._persist_geometry()
             config_store.save(self._config)
             if self._tray is not None:

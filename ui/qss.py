@@ -1,15 +1,4 @@
-"""The single source of truth for widget styling.
-
-Previously each widget carried its own inline `setStyleSheet` string, so a
-theme switch only repainted part of the UI (the transcript panel and the
-settings dialog kept the old palette — a real bug). Now one stylesheet is
-built from the palette and applied to the top-level window; every child
-inherits it, so switching theme is complete and instant.
-
-Widgets opt into a look with `objectName` or a dynamic property:
-    setProperty("variant", "primary" | "ghost" | "danger")
-    setProperty("role", "title" | "section" | "label" | "value" | "hint")
-"""
+"""The single source of truth for widget styling."""
 
 from __future__ import annotations
 

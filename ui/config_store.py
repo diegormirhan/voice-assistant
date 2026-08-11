@@ -1,12 +1,4 @@
-"""config.json load/save — validated, clamped and written atomically.
-
-Bugs fixed here vs. the previous version:
-  * a corrupt/hand-edited value (wrong type, out of range, unknown theme)
-    used to crash the UI at startup; every field is now coerced + clamped;
-  * `save()` wrote in place, so a crash mid-write left a truncated file;
-    it now writes to a temp file and replaces atomically;
-  * `save()` raised on a read-only folder and took the app down with it.
-"""
+"""config.json load/save — validated, clamped and written atomically."""
 
 from __future__ import annotations
 

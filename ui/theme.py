@@ -26,7 +26,7 @@ class Tokens:
     gap: int = 12
 
     ring_radius: int = 78
-    ring_margin: int = 68
+    ring_margin: int = 90
 
     fast_ms: int = 140
     base_ms: int = 200

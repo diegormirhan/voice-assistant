@@ -18,10 +18,6 @@ from ..theme import T, Palette
 
 
 class ToggleSwitch(QWidget):
-    """Bugs fixed: it reacted to every mouse button, `setChecked()` never
-    emitted `toggled` (so callers silently desynced), it had no focus/keyboard
-    handling, and it never repainted after a theme switch."""
-
     toggled = Signal(bool)
 
     def __init__(self, palette: Palette, checked: bool = False, parent=None):

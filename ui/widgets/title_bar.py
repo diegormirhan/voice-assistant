@@ -1,16 +1,4 @@
-"""Frameless top bar: settings, binaries, model profile, voice, window controls.
-
-Bugs fixed vs. the previous version:
-  * the profile and voice selects were never persisted — changing them was
-    lost on restart because nothing wrote back to the config. They now emit
-    changes and the window saves them.
-  * the selects were populated with hardcoded display strings ("Perfil:
-    Padrão") that did not survive a config value from disk; the current value
-    is now selected by data, not by label.
-  * the bar was one flat row of unrelated controls; grouping and a drag
-    surface make it read as a real title bar (and dragging now uses the
-    native `startSystemMove`, so Aero Snap works).
-"""
+"""Frameless top bar: settings, binaries, model profile, voice, window controls."""
 
 from __future__ import annotations
 

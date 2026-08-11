@@ -4,8 +4,12 @@ Repo: https://huggingface.co/diegomirhan/voice-assistant-binaries
 Repo must be public or have a token set in HF_TOKEN.
 """
 
-import urllib.request
 from pathlib import Path
+
+try: # imported as a package (python main.py)
+    from .downloads import batch
+except ImportError: # run directly (python scripts/download_binaries.py)
+    from downloads import batch
 
 ROOT = Path(__file__).resolve().parent.parent
 BIN = ROOT / "bin"
@@ -30,40 +34,22 @@ FILES = [
 ]
 
 
-def _url(dest: str) -> str:
-    return f"https://huggingface.co/diegomirhan/voice-assistant-binaries/resolve/main/{dest}"
+_BASE = "https://huggingface.co/diegomirhan/voice-assistant-binaries/resolve/main"
 
+def _targets() -> list[tuple[Path, str]]:
+    return [(BIN / dest, f"{_BASE}/{dest}") for dest in FILES]
 
-def download(dest: str) -> None:
-    target = BIN / dest
-    if target.exists():
-        print(f"[skip] {dest} ja existe")
-        return
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(target.suffix + ".part")
-    print(f"[down] {dest}")
-
-    req = urllib.request.Request(_url(dest), headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req) as resp:
-        total = int(resp.headers.get("Content-Length", 0))
-        downloaded = 0
-        with open(tmp, "wb") as f:
-            while chunk := resp.read(1 << 16):
-                f.write(chunk)
-                downloaded += len(chunk)
-                if total:
-                    pct = downloaded / total * 100
-                    print(f"\r  {downloaded/1e6:.1f}/{total/1e6:.0f} MB ({pct:.0f}%)", end="", flush=True)
-    print()
-
-    tmp.replace(target)
-
+def download_all(progress = None) -> None:
+    """progress: optional callable(done_bytes: int, total_bytes: int)."""
+    batch(_targets(), progress)
 
 def main() -> None:
-    for dest in FILES:
-        download(dest)
-
+    download_all(
+        progress = lambda d, t: print(
+            f"\r  {d/1e6:.1f}/{t/1e6:.0f} MB", end="", flush=True
+        ) if t else None
+    )
+    print()
 
 if __name__ == "__main__":
     main()

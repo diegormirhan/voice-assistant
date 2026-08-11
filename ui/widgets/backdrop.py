@@ -1,17 +1,4 @@
-"""Liquid-glass backdrop: slow blue/purple blobs, heavily blurred.
-
-Implementation notes
---------------------
-`QGraphicsBlurEffect` on a full-size widget re-renders the whole subtree into
-an offscreen surface every frame, which is far too expensive for a 60 fps
-ambient layer. Instead the blobs are painted into a small pixmap (1/8 scale)
-and upscaled with smooth interpolation: bilinear magnification of a tiny
-buffer *is* a cheap gaussian-ish blur, and the cost is independent of the
-window size.
-
-The layer lives inside the glass card and is lowered below every control, so
-the translucent surfaces above it read as frosted glass over moving colour.
-"""
+"""Liquid-glass backdrop: slow blue/purple blobs, heavily blurred."""
 
 from __future__ import annotations
 

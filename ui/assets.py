@@ -1,12 +1,4 @@
-"""Asset path resolution that survives symlinks and PyInstaller bundles.
-
-Bug fixed: assets were looked up with `Path(__file__).resolve()`. On a
-symlinked / mounted project folder `resolve()` rewrites the path to a target
-that does not expose the data files, so `icon.jpg` silently "did not exist"
-and the UI fell back to the plain power glyph. `absolute()` keeps the path the
-interpreter actually imported from, and `sys._MEIPASS` covers the frozen
-`.exe` produced by PyInstaller.
-"""
+"""Asset path resolution that survives symlinks and PyInstaller bundles."""
 
 from __future__ import annotations
 
