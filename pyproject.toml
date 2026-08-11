@@ -1,6 +1,6 @@
 [project]
 name = "voice-assistant"
-version = "0.1.0"
+version = "1.0.0"
 description = "Full-duplex voice assistant with local LLM/STT/TTS"
 requires-python = ">=3.12"
 dependencies = [

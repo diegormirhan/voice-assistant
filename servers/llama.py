@@ -20,7 +20,8 @@ class LlamaServer:
                 "--port", str(self._port),
                 "--host", self._host,
                 "--mmproj", str(self._mmproj),
-                "--reasoning", "off"])
+                "--reasoning", "off"],
+                creationflags=subprocess.CREATE_NO_WINDOW)
         self._wait_ready()
 
     def _wait_ready(self, timeout: float = 30.0):

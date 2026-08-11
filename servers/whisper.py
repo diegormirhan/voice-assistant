@@ -14,7 +14,8 @@ class WhisperServer:
         """Launches whisper-server and waits until it accepts requests."""
         self._proc = subprocess.Popen([str(self._exe), "-m", str(self._model),
                 "--language", "pt", 
-                "--port", str(self._port)])
+                "--port", str(self._port)],
+                creationflags=subprocess.CREATE_NO_WINDOW)
         self._wait_ready()
 
     def _wait_ready(self, timeout: float = 30.0):

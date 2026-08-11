@@ -2,7 +2,7 @@
 ; Builds the PyInstaller output (dist\VoiceAssistant\) into a single installer.
 
 #define MyAppName "VoiceAssistant"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "1.0.0"
 #define MyAppExeName "VoiceAssistant.exe"
 
 [Setup]
